@@ -23,6 +23,7 @@ const stateCustomer = [
   'VEHIGRUPO',
   'APROBADO OTROS',
   'VENTA',
+  'FUERA DE CUNDINAMARCA',
 ];
 
 async function main() {

@@ -163,6 +163,9 @@ export class CustomersService {
       { header: 'Estado Entrega', key: 'deliveryState', width: 20 },
       { header: 'Fecha Creación', key: 'createdAt', width: 20 },
       { header: 'Ultima Actualización', key: 'updatedAt', width: 20 },
+      { header: 'Fecha Venta', key: 'saleDate', width: 20 },
+      { header: 'Estado Venta', key: 'saleState', width: 20 },
+      { header: 'Origen', key: 'origin', width: 20 },
     ];
 
     data?.forEach((c) => {
@@ -185,6 +188,11 @@ export class CustomersService {
           ? new Date(c.deliveryDate).toLocaleDateString('es-CO')
           : '',
         deliveryState: c.deliveryState,
+        saleDate: c.saleDate
+          ? new Date(c.saleDate).toLocaleDateString('es-CO')
+          : '',
+        saleState: c.saleState,
+        origin: c.origin,
         createdAt: new Date(c.createdAt).toLocaleDateString('es-CO'),
         updatedAt: new Date(c.updatedAt).toLocaleDateString('es-CO'),
       });
@@ -270,6 +278,8 @@ export class CustomersService {
         advisorId,
         stateId,
         assignedAt,
+        saleState: dto.saleState ?? 'NA',
+        origin: dto.origin ?? 'CRM',
       },
       include: {
         advisor: { select: { id: true, email: true } },
@@ -290,13 +300,9 @@ export class CustomersService {
     if (!customer) throw new NotFoundException('Cliente no encontrado');
 
     if (dto.birthdate) dto.birthdate = new Date(dto.birthdate as any) as any;
-
-    if (
-      (dto.deliveryState === 'ENTREGADO' || dto.stateId === 19) &&
-      !customer.deliveryDate
-    ) {
-      dto.deliveryDate = new Date().toISOString(); // guarda fecha actual
-    }
+    if (dto.saleDate) dto.saleDate = new Date(dto.saleDate as any) as any;
+    if (dto.deliveryDate)
+      dto.deliveryDate = new Date(dto.deliveryDate as any) as any;
 
     const updated = await this.prisma.customer.update({
       where: { id },
@@ -425,6 +431,9 @@ export class CustomersService {
       'plateNumber',
       'deliveryDate',
       'deliveryState',
+      'saleDate',
+      'saleState',
+      'origin',
     ];
 
     const customersData: Prisma.CustomerCreateManyInput[] = [];
@@ -451,6 +460,9 @@ export class CustomersService {
         plateNumber: null,
         deliveryDate: null,
         deliveryState: null,
+        saleDate: null,
+        saleState: 'NA',
+        origin: 'CRM',
       };
 
       // Copiar dinámicamente las columnas que existan

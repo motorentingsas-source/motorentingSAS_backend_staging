@@ -59,6 +59,11 @@ model Customer {
   stateId   Int?
   state     State?  @relation(fields: [stateId], references: [id])
 
+  saleDate DateTime?
+  saleState SaleState @default(NA)
+
+  origin Origin @default(CRM)
+
   comments  Comment[]
   assignedAt DateTime?
   
@@ -95,6 +100,7 @@ enum Role {
   ADMIN
   COORDINADOR
   ASESOR
+  AUXILIAR
 }
 
 enum UserStatus {
@@ -105,4 +111,20 @@ enum UserStatus {
 enum DeliveryState {
   ENTREGADO
   PENDIENTE_ENTREGA
+}
+
+enum SaleState {
+  PENDIENTE_POR_APROBAR
+  APROBADO
+  RECHAZADO
+  NA
+}
+
+enum Origin {
+  CRM
+  TIKTOK
+  SALA
+  REDES_PROPIAS
+  REFERIDO
+  PLAN_MOTORENTING
 }
