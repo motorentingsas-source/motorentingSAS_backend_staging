@@ -31,7 +31,11 @@ export class CustomersService {
       Role.COORDINADOR,
     ]);
 
-    const excludeStatesForAdvisor = ['NO INTERESADO', 'REPORTADO'];
+    const excludeStatesForAdvisor = [
+      'NO INTERESADO',
+      'REPORTADO',
+      'FUERA DE CUNDINAMARCA',
+    ];
 
     const whereClause = isHighRole
       ? baseWhere
@@ -233,12 +237,52 @@ export class CustomersService {
       data: {
         ...customer,
         birthdate: formatDate(customer.birthdate),
+        saleDate: formatDate(customer.saleDate),
+        deliveryDate: formatDate(customer.deliveryDate),
       },
+    };
+  }
+
+  async getSaleCustomers(user: any) {
+    const SALE_STATE_ID = 19;
+
+    if (hasRole(user.role, [Role.ASESOR])) {
+      throw new ForbiddenException(
+        'No tienes permisos para ver clientes en estado de venta',
+      );
+    }
+
+    const customers = await this.prisma.customer.findMany({
+      where: {
+        stateId: SALE_STATE_ID,
+        NOT: {
+          AND: [{ deliveryState: 'ENTREGADO' }, { plateNumber: { not: null } }],
+        },
+      },
+      include: {
+        advisor: true,
+        comments: {
+          include: { createdBy: true },
+          orderBy: { createdAt: 'desc' },
+        },
+        state: true,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    return {
+      success: true,
+      message: 'Clientes en estado Venta obtenidos correctamente',
+      data: customers,
     };
   }
 
   // Crear cliente
   async createCustomer(dto: CreateCustomerDto, user: any) {
+    if (!dto.advisorId || isNaN(dto.advisorId) || dto.advisorId === 0) {
+      dto.advisorId = null;
+    }
+
     const existing = await this.prisma.customer.findFirst({
       where: { email: dto.email },
     });
@@ -268,6 +312,7 @@ export class CustomersService {
       const defaultState = await this.prisma.state.findUnique({
         where: { name: 'Sin Contactar' },
       });
+      console.log(defaultState);
       stateId = defaultState?.id;
     }
 
@@ -303,6 +348,8 @@ export class CustomersService {
     if (dto.saleDate) dto.saleDate = new Date(dto.saleDate as any) as any;
     if (dto.deliveryDate)
       dto.deliveryDate = new Date(dto.deliveryDate as any) as any;
+
+    if (dto.stateId === 19) dto.saleState = 'PENDIENTE_POR_APROBAR';
 
     const updated = await this.prisma.customer.update({
       where: { id },

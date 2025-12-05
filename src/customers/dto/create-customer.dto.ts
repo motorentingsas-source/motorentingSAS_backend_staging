@@ -7,6 +7,7 @@ import {
   IsEnum,
   ValidateIf,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 import { DeliveryState, SaleState, Origin } from '@prisma/client';
 
 export class CreateCustomerDto {
@@ -52,8 +53,9 @@ export class CreateCustomerDto {
   plateNumber?: string;
 
   @IsOptional()
+  @Type(() => Number)
   @IsInt()
-  advisorId?: number;
+  advisorId?: number | null;
 
   @IsOptional()
   @IsInt()

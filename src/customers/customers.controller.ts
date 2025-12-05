@@ -61,6 +61,13 @@ export class CustomersController {
     res.send(buffer);
   }
 
+  // GET /customers/sale
+  // SUPER_ADMIN, ADMIN, COORDINADOR: ven todos los clientes en venta
+  @Get('/sale')
+  getSaleCustomers(@Req() req) {
+    return this.customersService.getSaleCustomers(req.user);
+  }
+
   // GET /customers/:id
   // SUPER_ADMIN y ADMIN puede consultar cualquier cliente
   // ASESOR solo puede ver sus clientes
