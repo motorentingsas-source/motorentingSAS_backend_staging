@@ -12,6 +12,7 @@ import { UpdateCustomerDto } from './dto/update-customer.dto';
 import { AssignMultipleDto } from './dto/assign-multiple.dto';
 import { hasRole } from 'src/common/role-check.util';
 import { Workbook } from 'exceljs';
+import { ApproveCustomerDto } from './dto/approve-customer.dto';
 
 @Injectable()
 export class CustomersService {
@@ -267,7 +268,7 @@ export class CustomersService {
         },
         state: true,
       },
-      orderBy: { createdAt: 'desc' },
+      orderBy: { updatedAt: 'desc' },
     });
 
     return {
@@ -384,8 +385,23 @@ export class CustomersService {
   async addComment(
     customerId: number,
     description: string,
-    user: { userId: number },
+    saleState: string | undefined,
+    user: any,
   ) {
+    const canChangeSaleState = hasRole(user.role, [
+      Role.SUPER_ADMIN,
+      Role.ADMIN,
+      Role.COORDINADOR,
+    ]);
+
+    const customer = await this.prisma.customer.findUnique({
+      where: { id: customerId },
+    });
+
+    if (!customer) {
+      throw new NotFoundException('Cliente no encontrado');
+    }
+
     const comment = await this.prisma.comment.create({
       data: {
         description,
@@ -395,9 +411,15 @@ export class CustomersService {
       include: { createdBy: true },
     });
 
+    const updateData: any = { updatedAt: new Date() };
+
+    if (saleState === 'RECHAZADO' && canChangeSaleState) {
+      updateData.saleState = 'RECHAZADO';
+    }
+
     await this.prisma.customer.update({
       where: { id: customerId },
-      data: { updatedAt: new Date() },
+      data: updateData,
     });
 
     return {
@@ -545,6 +567,82 @@ export class CustomersService {
       message: `Importación completada: ${result.count} clientes creados (duplicados ignorados)`,
       count: result.count,
     };
+  }
+
+  private async generateOrderNumber() {
+    const last = await this.prisma.customer.findFirst({
+      where: { saleState: 'APROBADO' },
+      orderBy: { id: 'desc' },
+      select: { orderNumber: true },
+    });
+
+    if (!last || !last.orderNumber) return 'MRS0001';
+
+    const num = parseInt(last.orderNumber.replace('MRS', '')) + 1;
+    return `MRS${num.toString().padStart(4, '0')}`;
+  }
+
+  async approveCustomer(id: number, dto: ApproveCustomerDto, user: any) {
+    const allowed = ['SUPER_ADMIN', 'ADMIN', 'COORDINADOR'];
+    if (!allowed.includes(user.rol))
+      throw new ForbiddenException('No tienes permisos para aprobar');
+
+    const customer = await this.prisma.customer.findUnique({ where: { id } });
+    if (!customer) throw new NotFoundException('Cliente no encontrado');
+
+    // Generar Número de orden si saleState === APROBADO
+    let generatedOrderNumber = customer.orderNumber;
+
+    if (dto.saleState === 'APROBADO' && !customer.orderNumber) {
+      generatedOrderNumber = await this.generateOrderNumber();
+    }
+
+    // Actualizar todo en una sola transacción para integridad
+    return await this.prisma.$transaction(async (tx) => {
+      // Actualizar customer
+      const updatedCustomer = await tx.customer.update({
+        where: { id },
+        data: {
+          saleState:
+            dto.saleState === 'APROBADO' ? 'APROBADO' : customer.saleState,
+          orderNumber: generatedOrderNumber,
+          distributor: dto.distributor,
+        },
+      });
+
+      // Eliminar registros previos para reemplazarlos
+      await tx.customerHolder.deleteMany({ where: { customerId: id } });
+      await tx.customerPayment.deleteMany({ where: { customerId: id } });
+      await tx.customerReceipt.deleteMany({ where: { customerId: id } });
+      await tx.customerPurchase.deleteMany({ where: { customerId: id } });
+
+      await tx.customerPurchase.create({
+        data: {
+          ...dto.purchase,
+          customerId: id,
+        },
+      });
+
+      for (const h of dto.holders ?? []) {
+        await tx.customerHolder.create({
+          data: { ...h, customerId: id },
+        });
+      }
+
+      for (const p of dto.payments ?? []) {
+        await tx.customerPayment.create({
+          data: { ...p, customerId: id },
+        });
+      }
+
+      for (const r of dto.receipts ?? []) {
+        await tx.customerReceipt.create({
+          data: { ...r, customerId: id },
+        });
+      }
+
+      return updatedCustomer;
+    });
   }
 }
 

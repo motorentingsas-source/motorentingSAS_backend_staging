@@ -66,6 +66,14 @@ model Customer {
 
   comments  Comment[]
   assignedAt DateTime?
+
+  orderNumber  String?   // MRS0001, MRS0002...
+  distributor  Distributor?  
+
+  holders      CustomerHolder[]
+  purchase     CustomerPurchase?
+  payments     CustomerPayment[]
+  receipts     CustomerReceipt[]
   
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
@@ -84,6 +92,63 @@ model Comment {
 
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+}
+
+model CustomerHolder {
+  id        Int      @id @default(autoincrement())
+  fullName  String
+  document  String
+  email     String?
+  phone     String?
+  address   String?
+  city      String?
+  financialEntity FinancialEntity
+
+  customerId Int
+  customer   Customer @relation(fields: [customerId], references: [id])
+
+  createdAt DateTime @default(now())
+}
+
+model CustomerPurchase {
+  id             Int      @id @default(autoincrement())
+  brand          String
+  reference      String
+  mainColor      String
+  optionalColor  String?
+  commercialValue Int
+  processValue    Int
+  totalValue      Int
+
+  customerId Int @unique
+  customer   Customer @relation(fields: [customerId], references: [id])
+
+  createdAt DateTime @default(now())
+}
+
+model CustomerPayment {
+  id        Int      @id @default(autoincrement())
+  financialEntity FinancialEntity
+  totalPayment Int
+  aval        Int
+  approvalDate DateTime?
+
+  customerId Int
+  customer   Customer @relation(fields: [customerId], references: [id])
+
+  createdAt DateTime @default(now())
+}
+
+model CustomerReceipt {
+  id         Int      @id @default(autoincrement())
+  receiptNumber String
+  date        DateTime
+  amount      Int
+
+  customerId Int
+  customer   Customer @relation(fields: [customerId], references: [id])
+
+  createdAt DateTime @default(now())
 }
 
 model MotivationMessage {
@@ -127,4 +192,30 @@ enum Origin {
   REDES_PROPIAS
   REFERIDO
   PLAN_MOTORENTING
+}
+
+enum FinancialEntity {
+  PROGRESER
+  SUFI
+  CREDIORBE
+  SISTECREDITO
+  ADDI
+  VANTI
+  BANCO_DE_BOGOTA
+  VEHIGROUP
+  MOTORENTING_PLUS
+  TARJETA_CREDITO
+  TRANSFERENCIA
+  EFECTIVO
+  OTROS
+}
+
+enum Distributor {
+  DIGIMOTOS_SAS
+  COLCAMER_SAS
+  BMR_GROUP_SAS
+  DIVERXA_SAS
+  SUPERMOTOS_SAS
+  MOTORENTING_SAS
+  OTROS
 }

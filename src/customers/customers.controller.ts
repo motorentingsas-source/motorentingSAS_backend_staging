@@ -5,6 +5,7 @@ import {
   Get,
   Param,
   ParseIntPipe,
+  Patch,
   Post,
   Put,
   Req,
@@ -21,6 +22,7 @@ import { AddCommentDto } from './dto/add-comment.dto';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { AssignMultipleDto } from './dto/assign-multiple.dto';
 import type { Response } from 'express';
+import { ApproveCustomerDto } from './dto/approve-customer.dto';
 
 @Controller('customers')
 @UseGuards(JwtAuthGuard)
@@ -112,10 +114,16 @@ export class CustomersController {
   @Post('/:id/comments')
   addComment(
     @Param('id', ParseIntPipe) id: number,
-    @Body() dto: AddCommentDto,
+    @Body('description') description: string,
+    @Body('saleState') saleState: string,
     @Req() req,
   ) {
-    return this.customersService.addComment(id, dto.description, req.user);
+    return this.customersService.addComment(
+      id,
+      description,
+      saleState,
+      req.user,
+    );
   }
 
   // POST /customers/:id/assign/:advisorId
@@ -145,5 +153,14 @@ export class CustomersController {
   @UseInterceptors(FileInterceptor('file'))
   importCustomers(@UploadedFile() file: Express.Multer.File, @Req() req) {
     return this.customersService.importCustomers(file, req.user);
+  }
+
+  @Patch(':id/approve')
+  approve(
+    @Param('id') id: string,
+    @Body() dto: ApproveCustomerDto,
+    @Req() req,
+  ) {
+    return this.customersService.approveCustomer(Number(id), dto, req.user);
   }
 }
