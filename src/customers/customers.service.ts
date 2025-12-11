@@ -13,6 +13,9 @@ import { AssignMultipleDto } from './dto/assign-multiple.dto';
 import { hasRole } from 'src/common/role-check.util';
 import { Workbook } from 'exceljs';
 import { ApproveCustomerDto } from './dto/approve-customer.dto';
+import { RegisterPaymentDto } from './dto/register-payment.dto';
+import { CreateCustomerInvoiceDto } from './dto/create-customer-invoice.dto';
+import { CreateCustomerRegistrationDto } from './dto/create-customer-registration.dto';
 
 @Injectable()
 export class CustomersService {
@@ -313,7 +316,6 @@ export class CustomersService {
       const defaultState = await this.prisma.state.findUnique({
         where: { name: 'Sin Contactar' },
       });
-      console.log(defaultState);
       stateId = defaultState?.id;
     }
 
@@ -326,6 +328,8 @@ export class CustomersService {
         assignedAt,
         saleState: dto.saleState ?? 'NA',
         origin: dto.origin ?? 'CRM',
+        orderNumber: dto.orderNumber ?? null,
+        distributor: dto.distributor ?? null,
       },
       include: {
         advisor: { select: { id: true, email: true } },
@@ -349,6 +353,8 @@ export class CustomersService {
     if (dto.saleDate) dto.saleDate = new Date(dto.saleDate as any) as any;
     if (dto.deliveryDate)
       dto.deliveryDate = new Date(dto.deliveryDate as any) as any;
+    if (dto.approvalDate)
+      dto.approvalDate = new Date(dto.approvalDate as any) as any;
 
     if (dto.stateId === 19) dto.saleState = 'PENDIENTE_POR_APROBAR';
 
@@ -569,37 +575,32 @@ export class CustomersService {
     };
   }
 
-  private async generateOrderNumber() {
-    const last = await this.prisma.customer.findFirst({
-      where: { saleState: 'APROBADO' },
-      orderBy: { id: 'desc' },
-      select: { orderNumber: true },
-    });
-
-    if (!last || !last.orderNumber) return 'MRS0001';
-
-    const num = parseInt(last.orderNumber.replace('MRS', '')) + 1;
-    return `MRS${num.toString().padStart(4, '0')}`;
-  }
-
   async approveCustomer(id: number, dto: ApproveCustomerDto, user: any) {
-    const allowed = ['SUPER_ADMIN', 'ADMIN', 'COORDINADOR'];
-    if (!allowed.includes(user.rol))
+    if (!hasRole(user.role, [Role.SUPER_ADMIN, Role.ADMIN, Role.COORDINADOR]))
       throw new ForbiddenException('No tienes permisos para aprobar');
 
-    const customer = await this.prisma.customer.findUnique({ where: { id } });
-    if (!customer) throw new NotFoundException('Cliente no encontrado');
-
-    // Generar Número de orden si saleState === APROBADO
-    let generatedOrderNumber = customer.orderNumber;
-
-    if (dto.saleState === 'APROBADO' && !customer.orderNumber) {
-      generatedOrderNumber = await this.generateOrderNumber();
-    }
-
-    // Actualizar todo en una sola transacción para integridad
     return await this.prisma.$transaction(async (tx) => {
-      // Actualizar customer
+      const customer = await tx.customer.findUnique({ where: { id } });
+      if (!customer) throw new NotFoundException('Cliente no encontrado');
+
+      let generatedOrderNumber = customer.orderNumber;
+
+      // GENERAR número solo si pasa a APROBADO y no tiene uno
+      if (dto.saleState === 'APROBADO' && !customer.orderNumber) {
+        const last = await tx.customer.findFirst({
+          where: { orderNumber: { not: null } },
+          orderBy: { orderNumber: 'desc' },
+          select: { orderNumber: true },
+        });
+
+        if (!last || !last.orderNumber) {
+          generatedOrderNumber = 'MRS0001';
+        } else {
+          const num = parseInt(last.orderNumber.replace('MRS', '')) + 1;
+          generatedOrderNumber = `MRS${num.toString().padStart(4, '0')}`;
+        }
+      }
+
       const updatedCustomer = await tx.customer.update({
         where: { id },
         data: {
@@ -607,20 +608,18 @@ export class CustomersService {
             dto.saleState === 'APROBADO' ? 'APROBADO' : customer.saleState,
           orderNumber: generatedOrderNumber,
           distributor: dto.distributor,
+          approvalDate: dto.saleState === 'APROBADO' ? new Date() : null,
         },
       });
 
-      // Eliminar registros previos para reemplazarlos
+      // BORRAR Y RECREAR REGISTROS RELACIONADOS
       await tx.customerHolder.deleteMany({ where: { customerId: id } });
       await tx.customerPayment.deleteMany({ where: { customerId: id } });
       await tx.customerReceipt.deleteMany({ where: { customerId: id } });
       await tx.customerPurchase.deleteMany({ where: { customerId: id } });
 
       await tx.customerPurchase.create({
-        data: {
-          ...dto.purchase,
-          customerId: id,
-        },
+        data: { ...dto.purchase, customerId: id },
       });
 
       for (const h of dto.holders ?? []) {
@@ -643,6 +642,555 @@ export class CustomersService {
 
       return updatedCustomer;
     });
+  }
+
+  // Obtener todos los clientes aprobados
+  async getApprovedCustomers(user: any) {
+    if (
+      !hasRole(user.role, [
+        Role.SUPER_ADMIN,
+        Role.ADMIN,
+        Role.AUXILIAR,
+        Role.COORDINADOR,
+      ])
+    ) {
+      throw new ForbiddenException('No tienes permisos para ver aprobados');
+    }
+
+    const customers = await this.prisma.customer.findMany({
+      where: { saleState: 'APROBADO' },
+      include: {
+        advisor: true,
+        state: true,
+        comments: {
+          include: { createdBy: true },
+          orderBy: { createdAt: 'desc' },
+        },
+        holders: true,
+        purchase: true,
+        payments: true,
+        receipts: true,
+        invoices: true,
+        registration: true,
+      },
+      orderBy: { updatedAt: 'desc' },
+    });
+
+    const customersWithBalance = customers.map((c) => {
+      const paymentsWithNet = c.payments.map((p) => ({
+        ...p,
+        netForPurchase: (p.totalPayment || 0) - (p.aval || 0),
+      }));
+
+      const totalPayments = paymentsWithNet.reduce(
+        (sum, p) => sum + (p.netForPurchase || 0),
+        0,
+      );
+      const totalReceipts = c.receipts.reduce(
+        (sum, r) => sum + (r.amount || 0),
+        0,
+      );
+      const totalPurchase = c.purchase?.totalValue || 0;
+
+      const outstandingBalance =
+        totalPurchase - (totalPayments + totalReceipts);
+
+      return {
+        ...c,
+        payments: paymentsWithNet,
+        outstandingBalance,
+      };
+    });
+
+    return {
+      success: true,
+      message: 'Clientes aprobados obtenidos correctamente',
+      data: customersWithBalance,
+    };
+  }
+
+  // Obtener cliente por orderNumber con outstandingBalance
+  async getCustomerByOrderNumber(orderNumber: string) {
+    const customer = await this.prisma.customer.findUnique({
+      where: { orderNumber },
+      include: {
+        purchase: true,
+        payments: true,
+        receipts: true,
+      },
+    });
+
+    if (!customer) {
+      throw new NotFoundException('Cliente no encontrado');
+    }
+
+    // Calcular netForPurchase por payment
+    const paymentsWithNet = customer.payments.map((p) => ({
+      ...p,
+      netForPurchase: (p.totalPayment || 0) - (p.aval || 0),
+    }));
+
+    const totalPayments = paymentsWithNet.reduce(
+      (sum, p) => sum + (p.netForPurchase || 0),
+      0,
+    );
+    const totalReceipts = customer.receipts.reduce(
+      (sum, r) => sum + (r.amount || 0),
+      0,
+    );
+    const totalPurchase = customer.purchase?.totalValue || 0;
+
+    const outstandingBalance = totalPurchase - (totalPayments + totalReceipts);
+
+    return {
+      success: true,
+      message: 'Cliente obtenido correctamente',
+      data: {
+        id: customer.id,
+        orderNumber: customer.orderNumber,
+        name: customer.name,
+        outstandingBalance,
+      },
+    };
+  }
+
+  // Registrar pago en CustomerReceipt
+  async registerPayment(
+    customerId: number,
+    dto: RegisterPaymentDto,
+    user: any,
+  ) {
+    if (!hasRole(user.role, [Role.SUPER_ADMIN, Role.AUXILIAR])) {
+      throw new ForbiddenException('No tienes permisos para registrar pagos');
+    }
+
+    const customer = await this.prisma.customer.findUnique({
+      where: { id: customerId },
+    });
+
+    if (!customer) {
+      throw new NotFoundException('Cliente no encontrado');
+    }
+
+    const payment = await this.prisma.customerReceipt.create({
+      data: {
+        customerId,
+        receiptNumber: dto.receiptNumber,
+        date: new Date(dto.date),
+        amount: dto.amount,
+      },
+    });
+
+    return {
+      success: true,
+      message: 'Pago registrado correctamente',
+      data: payment,
+    };
+  }
+
+  // Consultar factura por orderNumber
+  async findInvoiceByOrderNumber(orderNumber: string, user: any) {
+    if (!hasRole(user.role, [Role.SUPER_ADMIN, Role.AUXILIAR])) {
+      throw new ForbiddenException(
+        'No tienes permisos para consultar facturas',
+      );
+    }
+
+    if (!orderNumber || orderNumber.trim() === '') {
+      throw new BadRequestException(
+        'Debes proporcionar un número de orden válido',
+      );
+    }
+
+    const customer = await this.prisma.customer.findUnique({
+      where: { orderNumber },
+      include: {
+        invoices: {
+          take: 1,
+          orderBy: { id: 'desc' },
+        },
+      },
+    });
+
+    if (!customer) {
+      throw new NotFoundException(
+        `No se encontró un cliente con el número de orden ${orderNumber}`,
+      );
+    }
+
+    const invoice = customer.invoices[0] || null;
+
+    if (!invoice) {
+      return {
+        success: true,
+        message: 'El cliente no tiene factura registrada',
+        data: {
+          invoice: null,
+          customerName: customer.name,
+        },
+      };
+    }
+
+    return {
+      success: true,
+      message: 'Factura encontrada correctamente',
+      data: {
+        ...invoice,
+        customerName: customer.name,
+      },
+    };
+  }
+
+  // Crear factura o actualizar si ya existe
+  async createOrUpdateInvoiceByOrderNumber(
+    orderNumber: string,
+    dto: CreateCustomerInvoiceDto,
+    user: any,
+  ) {
+    if (!hasRole(user.role, [Role.SUPER_ADMIN, Role.AUXILIAR])) {
+      throw new ForbiddenException(
+        'No tienes permisos para crear o actualizar facturas',
+      );
+    }
+
+    const customer = await this.prisma.customer.findUnique({
+      where: { orderNumber },
+    });
+
+    if (!customer) throw new NotFoundException('Cliente no encontrado');
+
+    const existingInvoice = await this.prisma.customerInvoice.findFirst({
+      where: { customerId: customer.id },
+    });
+
+    if (existingInvoice) {
+      const updated = await this.prisma.customerInvoice.update({
+        where: { id: existingInvoice.id },
+        data: {
+          ...dto,
+          date: new Date(dto.date),
+        },
+      });
+
+      return {
+        success: true,
+        message: 'Factura actualizada correctamente.',
+        data: updated,
+      };
+    }
+
+    const created = await this.prisma.customerInvoice.create({
+      data: {
+        ...dto,
+        date: new Date(dto.date),
+        customerId: customer.id,
+      },
+    });
+
+    return {
+      success: true,
+      message: 'Factura creada correctamente.',
+      data: created,
+    };
+  }
+
+  // Consultar matrícula por orderNumber
+  async findRegistrationByOrderNumber(orderNumber: string, user: any) {
+    if (!hasRole(user.role, [Role.SUPER_ADMIN, Role.AUXILIAR])) {
+      throw new ForbiddenException(
+        'No tienes permisos para consultar matrículas',
+      );
+    }
+
+    if (!orderNumber || orderNumber.trim() === '') {
+      throw new BadRequestException(
+        'Debes proporcionar un número de orden válido',
+      );
+    }
+
+    const customer = await this.prisma.customer.findUnique({
+      where: { orderNumber },
+      include: {
+        registration: {
+          take: 1,
+          orderBy: { id: 'desc' },
+        },
+      },
+    });
+
+    if (!customer) {
+      throw new NotFoundException(
+        `No se encontró un cliente con el número de orden ${orderNumber}`,
+      );
+    }
+
+    const registration = customer.registration[0] || null;
+
+    if (!registration) {
+      return {
+        success: true,
+        message: 'El cliente no tiene matrícula registrada',
+        data: {
+          registration: null,
+          customerName: customer.name,
+        },
+      };
+    }
+    return {
+      success: true,
+      message: 'Matrícula encontrada correctamente',
+      data: {
+        ...registration,
+        customerName: customer.name,
+      },
+    };
+  }
+
+  // Crear matrícula o actualizar si ya existe
+  async createOrUpdateRegistrationByOrderNumber(
+    orderNumber: string,
+    dto: CreateCustomerRegistrationDto,
+    user: any,
+  ) {
+    if (!hasRole(user.role, [Role.SUPER_ADMIN, Role.AUXILIAR])) {
+      throw new ForbiddenException(
+        'No tienes permisos para crear o actualizar facturas',
+      );
+    }
+
+    const customer = await this.prisma.customer.findUnique({
+      where: { orderNumber },
+    });
+
+    if (!customer) throw new NotFoundException('Cliente no encontrado');
+
+    const existingRegistration =
+      await this.prisma.customerRegistration.findFirst({
+        where: { customerId: customer.id },
+      });
+
+    if (existingRegistration) {
+      const registration = await this.prisma.customerRegistration.update({
+        where: { id: existingRegistration.id },
+        data: {
+          ...dto,
+          date: new Date(dto.date),
+        },
+      });
+
+      return {
+        success: true,
+        message: 'Matrícula actualizada correctamente.',
+        data: {
+          ...registration,
+          customerName: customer.name,
+        },
+      };
+    }
+
+    const registration = await this.prisma.customerRegistration.create({
+      data: {
+        ...dto,
+        date: new Date(dto.date),
+        customerId: customer.id,
+      },
+    });
+
+    return {
+      success: true,
+      message: 'Matrícula creada correctamente.',
+      data: {
+        ...registration,
+        customerName: customer.name,
+      },
+    };
+  }
+
+  // Exportar todos los clientes aprobados a Excel
+  async exportAllApprovedCustomers(user: any): Promise<ArrayBuffer> {
+    if (!hasRole(user.role, [Role.SUPER_ADMIN])) {
+      throw new ForbiddenException('No tienes permisos para exportar clientes');
+    }
+
+    const customers = await this.prisma.customer.findMany({
+      where: { saleState: 'APROBADO' },
+      orderBy: { id: 'asc' },
+      include: {
+        advisor: true,
+        state: true,
+        holders: true,
+        purchase: true,
+        payments: true,
+        receipts: true,
+        invoices: true,
+        registration: true,
+      },
+    });
+
+    const workbook = new Workbook();
+    const sheet = workbook.addWorksheet('Clientes');
+
+    // ENCABEZADOS EN ESPAÑOL
+    sheet.columns = [
+      { header: 'ID', key: 'id', width: 10 },
+      { header: 'Nombre', key: 'name', width: 25 },
+      { header: 'Documento', key: 'document', width: 20 },
+      { header: 'Correo', key: 'email', width: 25 },
+      { header: 'Teléfono', key: 'phone', width: 15 },
+      { header: 'Nacimiento', key: 'birthdate', width: 20 },
+      { header: 'Dirección', key: 'address', width: 30 },
+      { header: 'Ciudad', key: 'city', width: 20 },
+      { header: 'Departamento', key: 'department', width: 20 },
+      { header: 'Estado', key: 'state', width: 20 },
+      { header: 'Asesor', key: 'advisor', width: 20 },
+      { header: 'Fecha Venta', key: 'saleDate', width: 20 },
+      { header: 'Estado Venta', key: 'saleState', width: 20 },
+      { header: 'Entrega', key: 'deliveryDate', width: 20 },
+      { header: 'Placa', key: 'plateNumber', width: 20 },
+      { header: 'Origen', key: 'origin', width: 20 },
+
+      // HOLDER PRINCIPAL (si hay)
+      { header: 'Titular', key: 'holderName', width: 25 },
+      { header: 'Doc Titular', key: 'holderDocument', width: 20 },
+      { header: 'Correo Titular', key: 'holderEmail', width: 25 },
+      { header: 'Teléfono Titular', key: 'holderPhone', width: 20 },
+
+      // PURCHASE
+      { header: 'Marca', key: 'brand', width: 20 },
+      { header: 'Referencia', key: 'reference', width: 20 },
+      { header: 'Color Principal', key: 'mainColor', width: 20 },
+      { header: 'Valor Total', key: 'totalValue', width: 20 },
+
+      // PAYMENT (primer pago)
+      { header: 'Entidad Financiera', key: 'paymentEntity', width: 20 },
+      { header: 'Pago Total', key: 'paymentTotal', width: 15 },
+      { header: 'Aval', key: 'aval', width: 15 },
+      { header: 'Fecha Aprobación', key: 'approvalDate', width: 20 },
+
+      // RECEIPT (primer recibo)
+      { header: 'N° Recibo', key: 'receiptNumber', width: 20 },
+      { header: 'Fecha Recibo', key: 'receiptDate', width: 20 },
+      { header: 'Monto', key: 'receiptAmount', width: 15 },
+
+      // INVOICE
+      { header: 'N° Factura', key: 'invoiceNumber', width: 20 },
+      { header: 'Fecha Factura', key: 'invoiceDate', width: 20 },
+      { header: 'Valor Factura', key: 'invoiceValue', width: 20 },
+      { header: 'Chasis', key: 'chassisNumber', width: 25 },
+      { header: 'Motor', key: 'engineNumber', width: 25 },
+
+      // REGISTRATION
+      { header: 'Placa', key: 'plate', width: 15 },
+      { header: 'SOAT', key: 'soatValue', width: 15 },
+      { header: 'Matricula', key: 'registerValue', width: 15 },
+      { header: 'Fecha Matricula', key: 'registerDate', width: 20 },
+    ];
+
+    customers.forEach((c) => {
+      const holders = c.holders || [];
+      const payments = c.payments || [];
+      const receipts = c.receipts || [];
+      const invoices = c.invoices || [];
+      const registrations = Array.isArray(c.registration)
+        ? c.registration
+        : c.registration
+          ? [c.registration]
+          : [];
+
+      // Obtener el máximo número de filas que debe generar este cliente
+      const maxRows = Math.max(
+        holders.length,
+        payments.length,
+        receipts.length,
+        invoices.length,
+        registrations.length,
+        1,
+      );
+
+      for (let i = 0; i < maxRows; i++) {
+        const holder = holders[i] || {};
+        const payment = payments[i] || {};
+        const receipt = receipts[i] || {};
+        const invoice = invoices[i] || {};
+        const reg = registrations[i] || {};
+
+        sheet.addRow({
+          // CUSTOMER
+          id: i === 0 ? c.id : '', // solo mostrar en primera fila
+          name: i === 0 ? c.name : '',
+          document: i === 0 ? c.document : '',
+          email: i === 0 ? c.email : '',
+          phone: i === 0 ? c.phone : '',
+          birthdate:
+            i === 0 && c.birthdate
+              ? new Date(c.birthdate).toLocaleDateString('es-CO')
+              : '',
+          address: i === 0 ? c.address : '',
+          city: i === 0 ? c.city : '',
+          department: i === 0 ? c.department : '',
+          state: i === 0 ? c.state?.name : '',
+          advisor: i === 0 ? c.advisor?.name : '',
+          saleDate:
+            i === 0 && c.saleDate
+              ? new Date(c.saleDate).toLocaleDateString('es-CO')
+              : '',
+          saleState: i === 0 ? c.saleState : '',
+          deliveryDate:
+            i === 0 && c.deliveryDate
+              ? new Date(c.deliveryDate).toLocaleDateString('es-CO')
+              : '',
+          plateNumber: i === 0 ? c.plateNumber : '',
+          origin: i === 0 ? c.origin : '',
+
+          // HOLDERS
+          holderName: holder.fullName || '',
+          holderDocument: holder.document || '',
+          holderEmail: holder.email || '',
+          holderPhone: holder.phone || '',
+
+          // PURCHASE (solo en primera fila)
+          brand: i === 0 ? c.purchase?.brand : '',
+          reference: i === 0 ? c.purchase?.reference : '',
+          mainColor: i === 0 ? c.purchase?.mainColor : '',
+          totalValue: i === 0 ? c.purchase?.totalValue : '',
+
+          // PAYMENTS
+          paymentEntity: payment.financialEntity || '',
+          paymentTotal: payment.totalPayment || '',
+          aval: payment.aval || '',
+          approvalDate: payment.approvalDate
+            ? new Date(payment.approvalDate).toLocaleDateString('es-CO')
+            : '',
+
+          // RECEIPTS
+          receiptNumber: receipt.receiptNumber || '',
+          receiptDate: receipt.date
+            ? new Date(receipt.date).toLocaleDateString('es-CO')
+            : '',
+          receiptAmount: receipt.amount || '',
+
+          // INVOICES
+          invoiceNumber: invoice.invoiceNumber || '',
+          invoiceDate: invoice.date
+            ? new Date(invoice.date).toLocaleDateString('es-CO')
+            : '',
+          invoiceValue: invoice.value || '',
+          chassisNumber: invoice.chassisNumber || '',
+          engineNumber: invoice.engineNumber || '',
+
+          // REGISTRATION
+          plate: reg.plate || '',
+          soatValue: reg.soatValue || '',
+          registerValue: reg.registerValue || '',
+          registerDate: reg.date
+            ? new Date(reg.date).toLocaleDateString('es-CO')
+            : '',
+        });
+      }
+    });
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    return buffer;
   }
 }
 

@@ -8,7 +8,7 @@ import {
   ValidateIf,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import { DeliveryState, SaleState, Origin } from '@prisma/client';
+import { DeliveryState, SaleState, Origin, Distributor } from '@prisma/client';
 
 export class CreateCustomerDto {
   @IsString()
@@ -72,4 +72,16 @@ export class CreateCustomerDto {
   @IsOptional()
   @IsEnum(Origin)
   origin?: Origin;
+
+  @IsOptional()
+  @IsString()
+  orderNumber?: string;
+
+  @IsOptional()
+  @IsEnum(Distributor)
+  distributor?: Distributor;
+
+  @IsOptional()
+  @IsDateString()
+  approvalDate?: string;
 }

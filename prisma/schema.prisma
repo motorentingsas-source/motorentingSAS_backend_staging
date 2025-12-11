@@ -8,23 +8,23 @@ datasource db {
 }
 
 model User {
-  id        Int      @id @default(autoincrement())
-  name      String   @default("SIN NOMBRE")
-  email     String   @unique
-  birthdate DateTime?
-  phone     String?
-  address   String?
-  city      String?
-  department    String?
-  document  String?
-  avatar    String?
+  id         Int       @id @default(autoincrement())
+  name       String    @default("SIN NOMBRE")
+  email      String    @unique
+  birthdate  DateTime?
+  phone      String?
+  address    String?
+  city       String?
+  department String?
+  document   String?
+  avatar     String?
 
-  password  String
-  role      Role       @default(ASESOR)
-  status    UserStatus @default(ACTIVE)
+  password String
+  role     Role       @default(ASESOR)
+  status   UserStatus @default(ACTIVE)
 
-  createdAt DateTime   @default(now())
-  updatedAt DateTime   @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   comments  Comment[]
   customers Customer[]
@@ -35,8 +35,8 @@ model State {
   name      String     @unique
   customers Customer[]
 
-  createdAt DateTime   @default(now())
-  updatedAt DateTime   @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model Customer {
@@ -50,33 +50,37 @@ model Customer {
   department    String?
   document      String?
   deliveryState DeliveryState?
-  deliveryDate  DateTime?     
+  deliveryDate  DateTime?
   plateNumber   String?
 
   advisorId Int?
-  advisor   User?   @relation(fields: [advisorId], references: [id])
+  advisor   User? @relation(fields: [advisorId], references: [id])
 
-  stateId   Int?
-  state     State?  @relation(fields: [stateId], references: [id])
+  stateId Int?
+  state   State? @relation(fields: [stateId], references: [id])
 
-  saleDate DateTime?
+  saleDate  DateTime?
   saleState SaleState @default(NA)
 
   origin Origin @default(CRM)
 
-  comments  Comment[]
+  comments   Comment[]
   assignedAt DateTime?
 
-  orderNumber  String?   // MRS0001, MRS0002...
-  distributor  Distributor?  
+  orderNumber String?      @unique
+  distributor Distributor?
 
-  holders      CustomerHolder[]
-  purchase     CustomerPurchase?
-  payments     CustomerPayment[]
-  receipts     CustomerReceipt[]
-  
-  createdAt DateTime   @default(now())
-  updatedAt DateTime   @updatedAt
+  holders  CustomerHolder[]
+  purchase CustomerPurchase?
+  payments CustomerPayment[]
+  receipts CustomerReceipt[]
+  invoices CustomerInvoice[]
+  registration CustomerRegistration[]
+
+  approvalDate DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model Comment {
@@ -84,24 +88,24 @@ model Comment {
   description String
   date        DateTime @default(now())
 
-  customerId  Int
-  customer    Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  customerId Int
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
 
   createdById Int
-  createdBy   User     @relation(fields: [createdById], references: [id])
+  createdBy   User @relation(fields: [createdById], references: [id])
 
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model CustomerHolder {
-  id        Int      @id @default(autoincrement())
-  fullName  String
-  document  String
-  email     String?
-  phone     String?
-  address   String?
-  city      String?
+  id              Int             @id @default(autoincrement())
+  fullName        String
+  document        String
+  email           String?
+  phone           String?
+  address         String?
+  city            String?
   financialEntity FinancialEntity
 
   customerId Int
@@ -111,27 +115,27 @@ model CustomerHolder {
 }
 
 model CustomerPurchase {
-  id             Int      @id @default(autoincrement())
-  brand          String
-  reference      String
-  mainColor      String
-  optionalColor  String?
+  id              Int     @id @default(autoincrement())
+  brand           String
+  reference       String
+  mainColor       String
+  optionalColor   String?
   commercialValue Int
   processValue    Int
   totalValue      Int
 
-  customerId Int @unique
+  customerId Int      @unique
   customer   Customer @relation(fields: [customerId], references: [id])
 
   createdAt DateTime @default(now())
 }
 
 model CustomerPayment {
-  id        Int      @id @default(autoincrement())
+  id              Int             @id @default(autoincrement())
   financialEntity FinancialEntity
-  totalPayment Int
-  aval        Int
-  approvalDate DateTime?
+  totalPayment    Int
+  aval            Int
+  approvalDate    DateTime?
 
   customerId Int
   customer   Customer @relation(fields: [customerId], references: [id])
@@ -140,10 +144,10 @@ model CustomerPayment {
 }
 
 model CustomerReceipt {
-  id         Int      @id @default(autoincrement())
+  id            Int      @id @default(autoincrement())
   receiptNumber String
-  date        DateTime
-  amount      Int
+  date          DateTime
+  amount        Int
 
   customerId Int
   customer   Customer @relation(fields: [customerId], references: [id])
@@ -151,11 +155,40 @@ model CustomerReceipt {
   createdAt DateTime @default(now())
 }
 
+model CustomerInvoice {
+  id            Int      @id @default(autoincrement())
+  invoiceNumber String   @unique
+  date          DateTime
+  value         Int
+  chassisNumber String
+  engineNumber  String
+
+  customerId Int @unique 
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model CustomerRegistration {
+  id            Int      @id @default(autoincrement())
+  plate         String   @unique
+  soatValue     Int
+  registerValue Int
+  date          DateTime
+
+  customerId Int @unique
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
 model MotivationMessage {
   id        Int      @id @default(autoincrement())
   title     String
   subtitle  String
-  items     Json    
+  items     Json
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }

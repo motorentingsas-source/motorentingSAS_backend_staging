@@ -5,7 +5,6 @@ import {
   Get,
   Param,
   ParseIntPipe,
-  Patch,
   Post,
   Put,
   Req,
@@ -18,11 +17,13 @@ import { CustomersService } from './customers.service';
 import { JwtAuthGuard } from 'src/auth/guard/jwt-auth.guard';
 import { CreateCustomerDto } from './dto/create-customer.dto';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
-import { AddCommentDto } from './dto/add-comment.dto';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { AssignMultipleDto } from './dto/assign-multiple.dto';
 import type { Response } from 'express';
 import { ApproveCustomerDto } from './dto/approve-customer.dto';
+import { RegisterPaymentDto } from './dto/register-payment.dto';
+import { CreateCustomerInvoiceDto } from './dto/create-customer-invoice.dto';
+import { CreateCustomerRegistrationDto } from './dto/create-customer-registration.dto';
 
 @Controller('customers')
 @UseGuards(JwtAuthGuard)
@@ -45,6 +46,8 @@ export class CustomersController {
     return this.customersService.getDeliveredCustomers(req.user);
   }
 
+  // GET /customers/delivered/export
+  // Exporta los clientes entregados a Excel
   @Get('/delivered/export')
   async exportDeliveredCustomers(@Req() req, @Res() res: Response) {
     const buffer = await this.customersService.exportDeliveredCustomersExcel(
@@ -63,9 +66,36 @@ export class CustomersController {
     res.send(buffer);
   }
 
+  // GET /customers/export-approved
+  // Exporta todos los clientes APROBADOS en una sola hoja Excel
+  @Get('/export-approved')
+  async exportAllApprovedCustomers(@Req() req, @Res() res) {
+    const buffer = await this.customersService.exportAllApprovedCustomers(
+      req.user,
+    );
+
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename=clientes_aprobados_${Date.now()}.xlsx`,
+    );
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+
+    res.send(Buffer.from(buffer));
+  }
+
+  // GET /customers/approved
+  // SUPER_ADMIN, ADMIN, AUXILIAR: ven todos los clientes en aprobados
+  @Get('/approved')
+  getApprovedCustomers(@Req() req) {
+    return this.customersService.getApprovedCustomers(req.user);
+  }
+
   // GET /customers/sale
   // SUPER_ADMIN, ADMIN, COORDINADOR: ven todos los clientes en venta
-  @Get('/sale')
+  @Get('/preApproved')
   getSaleCustomers(@Req() req) {
     return this.customersService.getSaleCustomers(req.user);
   }
@@ -76,6 +106,76 @@ export class CustomersController {
   @Get('/:id')
   getCustomerById(@Param('id', ParseIntPipe) id: number, @Req() req) {
     return this.customersService.getCustomerById(id, req.user);
+  }
+
+  // GET /customers/order/:orderNumber
+  @Get('/order/:orderNumber')
+  getCustomerByOrderNumber(@Param('orderNumber') orderNumber: string) {
+    return this.customersService.getCustomerByOrderNumber(orderNumber);
+  }
+
+  // POST /customers/:id/payments
+  // Registrar un pago para un cliente
+  @Post('/:id/payments')
+  async registerPayment(
+    @Param('id', ParseIntPipe) customerId: number,
+    @Body() dto: RegisterPaymentDto,
+    @Req() req,
+  ) {
+    return this.customersService.registerPayment(customerId, dto, req.user);
+  }
+
+  // GET /customers/:orderNumber
+  // Obtener factura por número de orden
+  @Get('/invoices/:orderNumber')
+  async getByOrderNumber(@Param('orderNumber') orderNumber, @Req() req) {
+    return await this.customersService.findInvoiceByOrderNumber(
+      orderNumber,
+      req.user,
+    );
+  }
+
+  // POST /customers/:orderNumber/invoices
+  // Crear o actualizar factura por número de orden
+  @Post('/:orderNumber/invoices')
+  async registerInvoice(
+    @Param('orderNumber') orderNumber: string,
+    @Body() dto: CreateCustomerInvoiceDto,
+    @Req() req,
+  ) {
+    return this.customersService.createOrUpdateInvoiceByOrderNumber(
+      orderNumber,
+      dto,
+      req.user,
+    );
+  }
+
+  // GET /customers/registration/:orderNumber
+  // Obtener matriculas por número de orden
+  @Get('/registrations/:orderNumber')
+  async getRegistrationByOrderNumber(
+    @Param('orderNumber') orderNumber,
+    @Req() req,
+  ) {
+    return await this.customersService.findRegistrationByOrderNumber(
+      orderNumber,
+      req.user,
+    );
+  }
+
+  // POST /customers/:orderNumber/registrations
+  // Crear o actualizar matricula por número de orden
+  @Post('/:orderNumber/registrations')
+  async registerRegistration(
+    @Param('orderNumber') orderNumber: string,
+    @Body() dto: CreateCustomerRegistrationDto,
+    @Req() req,
+  ) {
+    return this.customersService.createOrUpdateRegistrationByOrderNumber(
+      orderNumber,
+      dto,
+      req.user,
+    );
   }
 
   // POST /customers
@@ -155,7 +255,7 @@ export class CustomersController {
     return this.customersService.importCustomers(file, req.user);
   }
 
-  @Patch(':id/approve')
+  @Post(':id/approve')
   approve(
     @Param('id') id: string,
     @Body() dto: ApproveCustomerDto,

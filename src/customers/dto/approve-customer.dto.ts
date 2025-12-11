@@ -1,5 +1,6 @@
 import {
   IsArray,
+  IsDateString,
   IsEnum,
   IsNotEmpty,
   IsNumber,
@@ -82,6 +83,7 @@ export class ReceiptDto {
   @IsString()
   receiptNumber: string;
 
+  @IsOptional()
   @Type(() => Date)
   date: Date;
 
@@ -117,4 +119,8 @@ export class ApproveCustomerDto {
   @ValidateNested({ each: true })
   @Type(() => ReceiptDto)
   receipts?: ReceiptDto[];
+
+  @IsOptional()
+  @IsDateString()
+  approvalDate?: string;
 }
