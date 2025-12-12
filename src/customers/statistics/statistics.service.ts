@@ -7,42 +7,39 @@ export class StatisticsService {
   constructor(private prisma: PrismaService) {}
 
   async getStatistics(dto: StatisticsDto) {
+    console.log('DTO recibido en getStatistics:', dto);
     const { advisors, status, startDate, endDate } = dto;
 
-    const state = await this.prisma.state.findUnique({
-      where: { id: status },
-    });
+    const state = await this.prisma.state.findUnique({ where: { id: status } });
+    if (!state) throw new NotFoundException(`El estado ${status} no existe`);
 
-    if (!state) {
-      throw new NotFoundException(`El estado ${status} no existe en DB`);
-    }
-
+    // Filtro por fechas
     const dateFilter: any = {};
     if (startDate) dateFilter.gte = new Date(startDate);
     if (endDate) dateFilter.lte = new Date(endDate);
 
+    // Traer clientes filtrados
     const customers = await this.prisma.customer.findMany({
       where: {
         advisorId: { in: advisors },
         stateId: state.id,
-        createdAt: Object.keys(dateFilter).length ? dateFilter : undefined,
-      },
-      include: {
-        advisor: true,
+        AND: Object.keys(dateFilter).length ? [{ createdAt: dateFilter }] : [],
       },
     });
 
-    const users = await this.prisma.user.findMany({});
+    // Traer solo asesores que nos interesan
+    const users = await this.prisma.user.findMany({
+      where: { id: { in: advisors } },
+    });
 
     return advisors.map((advisorId) => {
-      const advisor = users.filter((c) => c.id === advisorId);
-      const list = customers.filter((c) => c.advisorId === advisorId);
-      const advisorName = advisor[0]?.name || `Asesor ${advisorId}`;
+      const advisor = users.find((u) => u.id === advisorId);
+      const advisorName = advisor?.name || `Asesor ${advisorId}`;
+      const quantity = customers.filter(
+        (c) => c.advisorId === advisorId,
+      ).length;
 
-      return {
-        name: advisorName,
-        quantity: list.length,
-      };
+      return { name: advisorName, quantity };
     });
   }
 }

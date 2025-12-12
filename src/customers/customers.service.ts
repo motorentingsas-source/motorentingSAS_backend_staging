@@ -7,6 +7,9 @@ import {
 import { PrismaService } from 'src/prisma.service';
 import { Role, Prisma } from '@prisma/client';
 import * as XLSX from 'xlsx';
+import PDFDocument = require('pdfkit');
+import * as fs from 'fs';
+import * as path from 'path';
 import { CreateCustomerDto } from './dto/create-customer.dto';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
 import { AssignMultipleDto } from './dto/assign-multiple.dto';
@@ -16,6 +19,7 @@ import { ApproveCustomerDto } from './dto/approve-customer.dto';
 import { RegisterPaymentDto } from './dto/register-payment.dto';
 import { CreateCustomerInvoiceDto } from './dto/create-customer-invoice.dto';
 import { CreateCustomerRegistrationDto } from './dto/create-customer-registration.dto';
+import { text } from 'pdfkit/js/mixins/text';
 
 @Injectable()
 export class CustomersService {
@@ -223,26 +227,41 @@ export class CustomersService {
           include: { createdBy: true },
           orderBy: { createdAt: 'desc' },
         },
+        invoices: true,
+        registration: true,
+        payments: true,
+        receipts: true,
+        holders: true,
+        purchase: true,
       },
     });
 
     if (!customer) throw new NotFoundException('Cliente no encontrado');
 
-    if (
-      hasRole(user.role, [Role.ASESOR]) &&
-      customer.advisorId !== user.userId
-    ) {
+    if (user.role === Role.ASESOR && customer.advisorId !== user.userId) {
       throw new ForbiddenException('No tienes permiso para ver este cliente');
     }
 
+    const hasInvoice = customer.invoices.length > 0;
+    const hasRegistration = customer.registration.length > 0;
+
+    const { outstandingBalance, creditBalance } =
+      this.calculateOutstandingBalance(customer);
+
+    const isReadyForProcess =
+      hasInvoice && hasRegistration && outstandingBalance === 0;
+
     return {
       success: true,
-      message: 'Cliente obtenido',
+      message: 'Cliente obtenido correctamente',
       data: {
         ...customer,
         birthdate: formatDate(customer.birthdate),
         saleDate: formatDate(customer.saleDate),
         deliveryDate: formatDate(customer.deliveryDate),
+        outstandingBalance,
+        creditBalance,
+        isReadyForProcess,
       },
     };
   }
@@ -259,8 +278,13 @@ export class CustomersService {
     const customers = await this.prisma.customer.findMany({
       where: {
         stateId: SALE_STATE_ID,
-        NOT: {
-          AND: [{ deliveryState: 'ENTREGADO' }, { plateNumber: { not: null } }],
+
+        saleState: {
+          in: ['PENDIENTE_POR_APROBAR', 'RECHAZADO'],
+        },
+
+        deliveryState: {
+          not: 'ENTREGADO',
         },
       },
       include: {
@@ -652,13 +676,17 @@ export class CustomersService {
         Role.ADMIN,
         Role.AUXILIAR,
         Role.COORDINADOR,
+        Role.ASESOR,
       ])
     ) {
       throw new ForbiddenException('No tienes permisos para ver aprobados');
     }
 
+    const whereFilter: any = { saleState: 'APROBADO' };
+    if (user.role === Role.ASESOR) whereFilter.advisorId = user.userId;
+
     const customers = await this.prisma.customer.findMany({
-      where: { saleState: 'APROBADO' },
+      where: whereFilter,
       include: {
         advisor: true,
         state: true,
@@ -679,26 +707,17 @@ export class CustomersService {
     const customersWithBalance = customers.map((c) => {
       const paymentsWithNet = c.payments.map((p) => ({
         ...p,
-        netForPurchase: (p.totalPayment || 0) - (p.aval || 0),
+        netForPurchase: (p.totalPayment ?? 0) - (p.aval ?? 0),
       }));
 
-      const totalPayments = paymentsWithNet.reduce(
-        (sum, p) => sum + (p.netForPurchase || 0),
-        0,
-      );
-      const totalReceipts = c.receipts.reduce(
-        (sum, r) => sum + (r.amount || 0),
-        0,
-      );
-      const totalPurchase = c.purchase?.totalValue || 0;
-
-      const outstandingBalance =
-        totalPurchase - (totalPayments + totalReceipts);
+      const { outstandingBalance, creditBalance } =
+        this.calculateOutstandingBalance(c);
 
       return {
         ...c,
         payments: paymentsWithNet,
         outstandingBalance,
+        creditBalance,
       };
     });
 
@@ -713,34 +732,17 @@ export class CustomersService {
   async getCustomerByOrderNumber(orderNumber: string) {
     const customer = await this.prisma.customer.findUnique({
       where: { orderNumber },
-      include: {
-        purchase: true,
-        payments: true,
-        receipts: true,
-      },
+      include: { purchase: true, payments: true, receipts: true },
     });
 
     if (!customer) {
-      throw new NotFoundException('Cliente no encontrado');
+      throw new NotFoundException(
+        `No se encontró un cliente con el número de orden ${orderNumber}`,
+      );
     }
 
-    // Calcular netForPurchase por payment
-    const paymentsWithNet = customer.payments.map((p) => ({
-      ...p,
-      netForPurchase: (p.totalPayment || 0) - (p.aval || 0),
-    }));
-
-    const totalPayments = paymentsWithNet.reduce(
-      (sum, p) => sum + (p.netForPurchase || 0),
-      0,
-    );
-    const totalReceipts = customer.receipts.reduce(
-      (sum, r) => sum + (r.amount || 0),
-      0,
-    );
-    const totalPurchase = customer.purchase?.totalValue || 0;
-
-    const outstandingBalance = totalPurchase - (totalPayments + totalReceipts);
+    const { outstandingBalance, creditBalance } =
+      this.calculateOutstandingBalance(customer);
 
     return {
       success: true,
@@ -750,6 +752,7 @@ export class CustomersService {
         orderNumber: customer.orderNumber,
         name: customer.name,
         outstandingBalance,
+        creditBalance,
       },
     };
   }
@@ -847,12 +850,6 @@ export class CustomersService {
     dto: CreateCustomerInvoiceDto,
     user: any,
   ) {
-    if (!hasRole(user.role, [Role.SUPER_ADMIN, Role.AUXILIAR])) {
-      throw new ForbiddenException(
-        'No tienes permisos para crear o actualizar facturas',
-      );
-    }
-
     const customer = await this.prisma.customer.findUnique({
       where: { orderNumber },
     });
@@ -864,6 +861,12 @@ export class CustomersService {
     });
 
     if (existingInvoice) {
+      if (user.role !== Role.SUPER_ADMIN) {
+        throw new ForbiddenException(
+          'Solo el SUPER_ADMIN puede actualizar facturas',
+        );
+      }
+
       const updated = await this.prisma.customerInvoice.update({
         where: { id: existingInvoice.id },
         data: {
@@ -877,6 +880,10 @@ export class CustomersService {
         message: 'Factura actualizada correctamente.',
         data: updated,
       };
+    }
+
+    if (!hasRole(user.role, [Role.SUPER_ADMIN, Role.AUXILIAR])) {
+      throw new ForbiddenException('No tienes permisos para crear facturas');
     }
 
     const created = await this.prisma.customerInvoice.create({
@@ -952,12 +959,6 @@ export class CustomersService {
     dto: CreateCustomerRegistrationDto,
     user: any,
   ) {
-    if (!hasRole(user.role, [Role.SUPER_ADMIN, Role.AUXILIAR])) {
-      throw new ForbiddenException(
-        'No tienes permisos para crear o actualizar facturas',
-      );
-    }
-
     const customer = await this.prisma.customer.findUnique({
       where: { orderNumber },
     });
@@ -970,6 +971,12 @@ export class CustomersService {
       });
 
     if (existingRegistration) {
+      if (user.role !== Role.SUPER_ADMIN) {
+        throw new ForbiddenException(
+          'Solo el SUPER_ADMIN puede actualizar matrículas',
+        );
+      }
+
       const registration = await this.prisma.customerRegistration.update({
         where: { id: existingRegistration.id },
         data: {
@@ -986,6 +993,10 @@ export class CustomersService {
           customerName: customer.name,
         },
       };
+    }
+
+    if (!hasRole(user.role, [Role.SUPER_ADMIN, Role.AUXILIAR])) {
+      throw new ForbiddenException('No tienes permisos para crear matrículas');
     }
 
     const registration = await this.prisma.customerRegistration.create({
@@ -1191,6 +1202,369 @@ export class CustomersService {
 
     const buffer = await workbook.xlsx.writeBuffer();
     return buffer;
+  }
+
+  // Calcular saldo pendiente CUSTOMER
+  private calculateOutstandingBalance(customer: any): {
+    outstandingBalance: number; // Saldo por pagar
+    creditBalance: number; // Saldo a favor
+  } {
+    const payments = Array.isArray(customer.payments) ? customer.payments : [];
+    const receipts = Array.isArray(customer.receipts) ? customer.receipts : [];
+    const totalPurchase = customer.purchase?.totalValue ?? 0;
+
+    const totalPayments = payments.reduce((sum, p) => {
+      const totalPayment = p.totalPayment ?? 0;
+      const aval = p.aval ?? 0;
+      return sum + (totalPayment - aval);
+    }, 0);
+
+    const totalReceipts = receipts.reduce((sum, r) => sum + (r.amount ?? 0), 0);
+
+    const netBalance = totalPurchase - (totalPayments + totalReceipts);
+
+    return {
+      outstandingBalance: Math.max(netBalance, 0),
+      creditBalance: Math.max(-netBalance, 0),
+    };
+  }
+
+  // Exportar orden de entrega en PDF para cliente aprobado
+  async exportApprovedOrderPdf(customerId: number, user: any): Promise<Buffer> {
+    if (
+      !hasRole(user.role, [
+        Role.SUPER_ADMIN,
+        Role.AUXILIAR,
+        Role.COORDINADOR,
+        Role.ADMIN,
+      ])
+    ) {
+      throw new ForbiddenException('No tienes permisos para exportar clientes');
+    }
+
+    const customer = await this.prisma.customer.findUnique({
+      where: { id: customerId },
+      include: {
+        holders: true,
+        purchase: true,
+        invoices: true,
+        registration: true,
+        payments: true,
+        receipts: true,
+      },
+    });
+
+    if (!customer) throw new Error('Cliente no encontrado');
+    if (customer.saleState !== 'APROBADO')
+      throw new Error('El cliente no está APROBADO');
+
+    const PDFDocument = require('pdfkit');
+    const doc = new PDFDocument({ size: 'A4', margin: 40 });
+
+    const chunks: Buffer[] = [];
+    doc.on('data', (c) => chunks.push(c));
+    const result = new Promise<Buffer>((resolve) =>
+      doc.on('end', () => resolve(Buffer.concat(chunks))),
+    );
+
+    const safe = (v: any): string => {
+      if (!v) return '';
+      if (v instanceof Date) return v.toLocaleDateString('es-CO');
+      return String(v);
+    };
+
+    const TITLE_FONT = 12;
+    const TABLE_FONT = 9;
+
+    const marginLeft = 40;
+    const pageWidth = doc.page.width - 80;
+
+    const checkPage = (y: number): number => {
+      if (y > 760) {
+        doc.addPage();
+        return 40;
+      }
+      return y;
+    };
+
+    const drawColumnTable = (
+      title: string,
+      columns: string[],
+      values: any[],
+      y: number,
+    ) => {
+      y = checkPage(y);
+
+      doc
+        .font('Helvetica-Bold')
+        .fontSize(TITLE_FONT)
+        .text(title, marginLeft, y);
+      y += 18;
+
+      const colCount = columns.length;
+      const colWidth = pageWidth / colCount;
+      const rowHeight = 26;
+
+      // Encabezado
+      doc.rect(marginLeft, y, pageWidth, rowHeight).stroke();
+
+      columns.forEach((col, i) => {
+        const colX = marginLeft + colWidth * i;
+
+        if (i > 0) {
+          doc
+            .moveTo(colX, y)
+            .lineTo(colX, y + rowHeight)
+            .stroke();
+        }
+
+        doc
+          .font('Helvetica-Bold')
+          .fontSize(TABLE_FONT)
+          .text(col, colX + 5, y + 8, {
+            width: colWidth - 10,
+            align: 'center',
+          });
+      });
+
+      y += rowHeight;
+
+      // Fila de datos
+      doc.rect(marginLeft, y, pageWidth, rowHeight).stroke();
+
+      values.forEach((val, i) => {
+        const colX = marginLeft + colWidth * i;
+
+        if (i > 0) {
+          doc
+            .moveTo(colX, y)
+            .lineTo(colX, y + rowHeight)
+            .stroke();
+        }
+
+        doc
+          .font('Helvetica')
+          .fontSize(TABLE_FONT)
+          .text(safe(val), colX + 5, y + 8, {
+            width: colWidth - 10,
+            align: 'center',
+          });
+      });
+
+      y += rowHeight + 20;
+
+      return y;
+    };
+
+    const drawHoldersTable = (title: string, holders: any[], y: number) => {
+      y = checkPage(y);
+
+      doc
+        .font('Helvetica-Bold')
+        .fontSize(TITLE_FONT)
+        .text(title, marginLeft, y);
+      y += 18;
+
+      const columns = [
+        'Nombre',
+        'Documento',
+        'Teléfono',
+        'Correo',
+        'Dirección',
+      ];
+      const colCount = columns.length;
+      const colWidth = pageWidth / colCount;
+      const rowHeight = 26;
+
+      // Header
+      doc.rect(marginLeft, y, pageWidth, rowHeight).stroke();
+
+      columns.forEach((col, i) => {
+        const colX = marginLeft + colWidth * i;
+        if (i > 0)
+          doc
+            .moveTo(colX, y)
+            .lineTo(colX, y + rowHeight)
+            .stroke();
+
+        doc
+          .font('Helvetica-Bold')
+          .fontSize(TABLE_FONT)
+          .text(col, colX + 5, y + 8, {
+            width: colWidth - 10,
+            align: 'center',
+          });
+      });
+
+      y += rowHeight;
+
+      // Filas de titulares
+      for (const h of holders) {
+        y = checkPage(y);
+
+        const vals = [
+          h.fullName || '',
+          h.document || '',
+          h.phone || '',
+          h.email || '',
+          h.address || '',
+        ];
+
+        doc.rect(marginLeft, y, pageWidth, rowHeight).stroke();
+
+        vals.forEach((val, i) => {
+          const colX = marginLeft + colWidth * i;
+          if (i > 0)
+            doc
+              .moveTo(colX, y)
+              .lineTo(colX, y + rowHeight)
+              .stroke();
+
+          doc
+            .font('Helvetica')
+            .fontSize(TABLE_FONT)
+            .text(safe(val), colX + 5, y + 8, {
+              width: colWidth - 10,
+              align: 'center',
+            });
+        });
+
+        y += rowHeight;
+      }
+
+      return y + 20;
+    };
+
+    const logoPath = path.join(process.cwd(), 'public', 'logoMotoRenting.png');
+
+    doc.rect(40, 40, 510, 90).stroke();
+
+    if (fs.existsSync(logoPath)) {
+      doc.image(logoPath, 50, 55, { width: 90 });
+    }
+
+    doc.font('Helvetica-Bold').fontSize(12).text('MOTORENTING SAS', 170, 55);
+    doc.fontSize(11).text('NIT: 901746795-7', 170, 75);
+    doc.text('Dirección: AV BOYACÁ # 8B 21 / # 8B 67, Bogotá', 170, 90);
+    doc.text('Teléfono: 3202392963', 170, 105);
+
+    let y = 150;
+
+    doc
+      .font('Helvetica-Bold')
+      .fontSize(14)
+      .text('ORDEN DE ENTREGA', 0, y, { align: 'center' });
+
+    y += 20;
+
+    // INFORMACIÓN CLIENTE
+    y = drawColumnTable(
+      'INFORMACIÓN DEL CLIENTE',
+      [
+        'Nombre',
+        'Documento',
+        'Teléfono',
+        'Correo',
+        'Ciudad',
+        'Depto',
+        'Dirección',
+      ],
+      [
+        customer.name,
+        customer.document,
+        customer.phone,
+        customer.email,
+        customer.city,
+        customer.department,
+        customer.address,
+      ],
+      y,
+    );
+
+    // DATOS ADICIONALES
+    y = drawColumnTable(
+      'DATOS ADICIONALES',
+      ['Nacimiento', 'Registro', 'Venta'],
+      [customer.birthdate, customer.createdAt, customer.saleDate],
+      y,
+    );
+
+    // TITULARES
+    if (customer.holders.length > 0) {
+      y = drawHoldersTable('TITULARES', customer.holders, y);
+    }
+
+    // DATOS DE LA COMPRA
+    y = drawColumnTable(
+      'DATOS DE LA COMPRA',
+      ['Marca', 'Referencia', 'Color'],
+      [
+        customer.purchase?.brand,
+        customer.purchase?.reference,
+        customer.purchase?.mainColor,
+      ],
+      y,
+    );
+
+    // INFORMACIÓN VEHÍCULO
+    const invoice = customer.invoices?.[0] || {};
+    const registration = Array.isArray(customer.registration)
+      ? customer.registration[0]
+      : customer.registration;
+
+    y = drawColumnTable(
+      'INFORMACIÓN VEHÍCULO',
+      ['Chasis', 'Motor', 'Placa'],
+      [invoice.chassisNumber, invoice.engineNumber, registration?.plate],
+      y,
+    );
+
+    // SALDO PENDIENTE
+    const { outstandingBalance, creditBalance } =
+      this.calculateOutstandingBalance(customer);
+
+    doc
+      .font('Helvetica-Bold')
+      .fontSize(14)
+      .text(
+        `SALDO PENDIENTE: $ ${outstandingBalance.toLocaleString('es-CO')}`,
+        marginLeft,
+        y,
+      );
+
+    y += 20;
+
+    doc
+      .font('Helvetica-Bold')
+      .fontSize(14)
+      .text(
+        `SALDO A FAVOR: $ ${creditBalance.toLocaleString('es-CO')}`,
+        marginLeft,
+        y,
+      );
+
+    y += 40;
+
+    // FIRMA CLIENTE
+    doc.font('Helvetica').fontSize(10).text('Firma del cliente:', 40, y);
+    y += 20;
+    doc
+      .moveTo(40, y + 30)
+      .lineTo(300, y + 30)
+      .stroke();
+
+    y += 50;
+
+    const acceptanceText =
+      'Declaro que he recibido el vehículo en perfecto estado de funcionamiento, ' +
+      'junto con todos los documentos, accesorios y elementos entregados. ' +
+      'Manifiesto que la información suministrada es correcta y acepto los términos ' +
+      'y condiciones del contrato firmado con MOTORENTING SAS.';
+
+    doc.font('Helvetica').fontSize(8).text(acceptanceText, 40, y);
+
+    doc.end();
+    return result;
   }
 }
 

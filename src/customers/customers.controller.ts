@@ -86,8 +86,29 @@ export class CustomersController {
     res.send(Buffer.from(buffer));
   }
 
+  // GET /customers/:id/order-delivery
+  // Descargar orden de entrega en PDF para cliente aprobado
+  @Get('/:id/order-delivery')
+  async exportApprovedOrderPdf(
+    @Param('id', ParseIntPipe) id: number,
+    @Res() res,
+    @Req() req,
+  ) {
+    const buffer = await this.customersService.exportApprovedOrderPdf(
+      id,
+      req.user,
+    );
+
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename=orden_entrega.pdf`,
+    );
+    res.setHeader('Content-Type', 'application/pdf');
+
+    res.send(buffer);
+  }
+
   // GET /customers/approved
-  // SUPER_ADMIN, ADMIN, AUXILIAR: ven todos los clientes en aprobados
   @Get('/approved')
   getApprovedCustomers(@Req() req) {
     return this.customersService.getApprovedCustomers(req.user);

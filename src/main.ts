@@ -2,6 +2,8 @@ import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { ValidationPipe } from '@nestjs/common';
+import { join } from 'path';
+import * as express from 'express';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -13,6 +15,8 @@ async function bootstrap() {
       transform: true, // transforma los tipos (ej: "123" → number si espera number)
     }),
   );
+
+  app.use('/public', express.static(join(process.cwd(), 'public')));
 
   // Configuración de Swagger
   const config = new DocumentBuilder()
