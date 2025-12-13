@@ -1055,6 +1055,8 @@ export class CustomersService {
       { header: 'Estado', key: 'state', width: 20 },
       { header: 'Asesor', key: 'advisor', width: 20 },
       { header: 'Fecha Venta', key: 'saleDate', width: 20 },
+      { header: 'Fecha de Aprobacion', key: 'approvalDate', width: 20 },
+      { header: 'Numero de Orden', key: 'orderNumber', width: 20 },
       { header: 'Estado Venta', key: 'saleState', width: 20 },
       { header: 'Entrega', key: 'deliveryDate', width: 20 },
       { header: 'Placa', key: 'plateNumber', width: 20 },
@@ -1145,7 +1147,12 @@ export class CustomersService {
             i === 0 && c.saleDate
               ? new Date(c.saleDate).toLocaleDateString('es-CO')
               : '',
+          approvalDate:
+            i === 0 && c.approvalDate
+              ? new Date(c.approvalDate).toLocaleDateString('es-CO')
+              : '',
           saleState: i === 0 ? c.saleState : '',
+          orderNumber: i === 0 ? c.orderNumber : '',
           deliveryDate:
             i === 0 && c.deliveryDate
               ? new Date(c.deliveryDate).toLocaleDateString('es-CO')
@@ -1169,7 +1176,7 @@ export class CustomersService {
           paymentEntity: payment.financialEntity || '',
           paymentTotal: payment.totalPayment || '',
           aval: payment.aval || '',
-          approvalDate: payment.approvalDate
+          date: payment.approvalDate
             ? new Date(payment.approvalDate).toLocaleDateString('es-CO')
             : '',
 
