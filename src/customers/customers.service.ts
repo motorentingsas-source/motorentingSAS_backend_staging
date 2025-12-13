@@ -1060,12 +1060,13 @@ export class CustomersService {
       { header: 'Estado', key: 'state', width: 20 },
       { header: 'Asesor', key: 'advisor', width: 20 },
       { header: 'Fecha Venta', key: 'saleDate', width: 20 },
-      { header: 'Mes de Aprobacion', key: 'approvalDate', width: 20 },
+      { header: 'Mes de Aprobacion', key: 'approvalDate', width: 30 },
       { header: 'Numero de Orden', key: 'orderNumber', width: 20 },
       { header: 'Estado Venta', key: 'saleState', width: 20 },
       { header: 'Entrega', key: 'deliveryDate', width: 20 },
       { header: 'Placa', key: 'plateNumber', width: 20 },
       { header: 'Origen', key: 'origin', width: 20 },
+      { header: 'Distribuidor', key: 'distributor', width: 30 },
 
       // HOLDER PRINCIPAL (si hay)
       { header: 'Titular', key: 'holderName', width: 25 },
