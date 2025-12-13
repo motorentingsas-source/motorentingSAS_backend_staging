@@ -386,7 +386,11 @@ export class CustomersService {
     if (dto.approvalDate)
       dto.approvalDate = new Date(dto.approvalDate as any) as any;
 
-    if (dto.stateId === 19) dto.saleState = 'PENDIENTE_POR_APROBAR';
+    if (dto.stateId === 19) {
+      dto.saleState = 'PENDIENTE_POR_APROBAR';
+    } else {
+      dto.saleState = dto.saleState ?? customer.saleState;
+    }
 
     const updated = await this.prisma.customer.update({
       where: { id },
@@ -1274,8 +1278,12 @@ export class CustomersService {
     });
 
     if (!customer) throw new Error('Cliente no encontrado');
-    if (customer.saleState !== 'APROBADO')
-      throw new Error('El cliente no está APROBADO');
+    if (
+      customer.saleState !== 'APROBADO' ||
+      customer.deliveryState !== 'ENTREGADO'
+    ) {
+      throw new Error('El cliente no está APROBADO o ENTREGADO');
+    }
 
     const PDFDocument = require('pdfkit');
     const doc = new PDFDocument({ size: 'A4', margin: 40 });
