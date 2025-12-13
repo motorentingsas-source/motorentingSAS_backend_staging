@@ -1049,7 +1049,6 @@ export class CustomersService {
 
     // ENCABEZADOS EN ESPAÑOL
     sheet.columns = [
-      { header: 'ID', key: 'id', width: 10 },
       { header: 'Nombre', key: 'name', width: 25 },
       { header: 'Documento', key: 'document', width: 20 },
       { header: 'Correo', key: 'email', width: 25 },
@@ -1061,7 +1060,7 @@ export class CustomersService {
       { header: 'Estado', key: 'state', width: 20 },
       { header: 'Asesor', key: 'advisor', width: 20 },
       { header: 'Fecha Venta', key: 'saleDate', width: 20 },
-      { header: 'Fecha de Aprobacion', key: 'approvalDate', width: 20 },
+      { header: 'Mes de Aprobacion', key: 'approvalDate', width: 20 },
       { header: 'Numero de Orden', key: 'orderNumber', width: 20 },
       { header: 'Estado Venta', key: 'saleState', width: 20 },
       { header: 'Entrega', key: 'deliveryDate', width: 20 },
@@ -1078,6 +1077,9 @@ export class CustomersService {
       { header: 'Marca', key: 'brand', width: 20 },
       { header: 'Referencia', key: 'reference', width: 20 },
       { header: 'Color Principal', key: 'mainColor', width: 20 },
+      { header: 'Color Opcional', key: 'optionalColor', width: 20 },
+      { header: 'Valor Comercial', key: 'commercialValue', width: 20 },
+      { header: 'Valor Trámite', key: 'processValue', width: 20 },
       { header: 'Valor Total', key: 'totalValue', width: 20 },
 
       // PAYMENT (primer pago)
@@ -1135,7 +1137,6 @@ export class CustomersService {
 
         sheet.addRow({
           // CUSTOMER
-          id: i === 0 ? c.id : '', // solo mostrar en primera fila
           name: i === 0 ? c.name : '',
           document: i === 0 ? c.document : '',
           email: i === 0 ? c.email : '',
@@ -1165,6 +1166,7 @@ export class CustomersService {
               : '',
           plateNumber: i === 0 ? c.plateNumber : '',
           origin: i === 0 ? c.origin : '',
+          distributor: i === 0 ? c.distributor : '',
 
           // HOLDERS
           holderName: holder.fullName || '',
@@ -1176,6 +1178,9 @@ export class CustomersService {
           brand: i === 0 ? c.purchase?.brand : '',
           reference: i === 0 ? c.purchase?.reference : '',
           mainColor: i === 0 ? c.purchase?.mainColor : '',
+          optionalColor: i === 0 ? c.purchase?.optionalColor : '',
+          commercialValue: i === 0 ? c.purchase?.commercialValue : '',
+          processValue: i === 0 ? c.purchase?.processValue : '',
           totalValue: i === 0 ? c.purchase?.totalValue : '',
 
           // PAYMENTS
