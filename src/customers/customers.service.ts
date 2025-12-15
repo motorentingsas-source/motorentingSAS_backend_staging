@@ -1257,6 +1257,9 @@ export class CustomersService {
   exportApprovedCustomersExcel(user: any) {
     return this.exportCustomersFullExcel(user, {
       saleState: 'APROBADO',
+      NOT: {
+        deliveryState: 'ENTREGADO',
+      },
     });
   }
 
