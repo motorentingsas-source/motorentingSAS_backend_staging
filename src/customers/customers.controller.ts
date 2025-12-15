@@ -46,37 +46,37 @@ export class CustomersController {
     return this.customersService.getDeliveredCustomers(req.user);
   }
 
-  // GET /customers/delivered/export
-  // Exporta los clientes entregados a Excel
-  @Get('/delivered/export')
-  async exportDeliveredCustomers(@Req() req, @Res() res: Response) {
-    const buffer = await this.customersService.exportDeliveredCustomersExcel(
-      req.user,
-    );
-
-    res.setHeader(
-      'Content-Type',
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    );
-    res.setHeader(
-      'Content-Disposition',
-      `attachment; filename=clientes_entregados_${Date.now()}.xlsx`,
-    );
-
-    res.send(buffer);
-  }
-
-  // GET /customers/export-approved
-  // Exporta todos los clientes APROBADOS en una sola hoja Excel
-  @Get('/export-approved')
-  async exportAllApprovedCustomers(@Req() req, @Res() res) {
-    const buffer = await this.customersService.exportAllApprovedCustomers(
+  // GET /customers/approved/export
+  // Exportar clientes aprobados a Excel
+  @Get('/approved/export')
+  async exportApproved(@Req() req, @Res() res) {
+    const buffer = await this.customersService.exportApprovedCustomersExcel(
       req.user,
     );
 
     res.setHeader(
       'Content-Disposition',
       `attachment; filename=clientes_aprobados_${Date.now()}.xlsx`,
+    );
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+
+    res.send(Buffer.from(buffer));
+  }
+
+  // GET /customers/delivered/export
+  // Exportar clientes entregados a Excel
+  @Get('/delivered/export')
+  async exportDelivered(@Req() req, @Res() res) {
+    const buffer = await this.customersService.exportDeliveredCustomersExcel(
+      req.user,
+    );
+
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename=clientes_entregados_${Date.now()}.xlsx`,
     );
     res.setHeader(
       'Content-Type',

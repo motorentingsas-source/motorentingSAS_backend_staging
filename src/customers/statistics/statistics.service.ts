@@ -7,7 +7,6 @@ export class StatisticsService {
   constructor(private prisma: PrismaService) {}
 
   async getStatistics(dto: StatisticsDto) {
-    console.log('DTO recibido en getStatistics:', dto);
     const { advisors, status, startDate, endDate } = dto;
 
     const state = await this.prisma.state.findUnique({ where: { id: status } });

@@ -159,69 +159,6 @@ export class CustomersService {
     };
   }
 
-  async exportDeliveredCustomersExcel(user: any): Promise<ArrayBuffer> {
-    const { data } = await this.getDeliveredCustomers(user);
-    const workbook = new Workbook();
-    const sheet = workbook.addWorksheet('Clientes Entregados');
-
-    sheet.columns = [
-      { header: 'ID', key: 'id', width: 10 },
-      { header: 'Nombre', key: 'name', width: 25 },
-      { header: 'Documento', key: 'document', width: 25 },
-      { header: 'Email', key: 'email', width: 25 },
-      { header: 'Fecha de Nacimiento', key: 'birthdate', width: 25 },
-      { header: 'Dirección', key: 'address', width: 25 },
-      { header: 'Teléfono', key: 'phone', width: 15 },
-      { header: 'Ciudad', key: 'city', width: 20 },
-      { header: 'Departamento', key: 'department', width: 20 },
-      { header: 'Placa', key: 'plateNumber', width: 15 },
-      { header: 'Estado', key: 'state', width: 20 },
-      { header: 'Asesor', key: 'advisor', width: 25 },
-      { header: 'Fecha Entrega', key: 'deliveryDate', width: 20 },
-      { header: 'Estado Entrega', key: 'deliveryState', width: 20 },
-      { header: 'Fecha Creación', key: 'createdAt', width: 20 },
-      { header: 'Ultima Actualización', key: 'updatedAt', width: 20 },
-      { header: 'Fecha Venta', key: 'saleDate', width: 20 },
-      { header: 'Estado Venta', key: 'saleState', width: 20 },
-      { header: 'Origen', key: 'origin', width: 20 },
-    ];
-
-    data?.forEach((c) => {
-      sheet.addRow({
-        id: c.id,
-        name: c.name,
-        document: c.document,
-        email: c.email,
-        birthdate: c.birthdate
-          ? new Date(c.birthdate).toLocaleDateString('es-CO')
-          : '',
-        address: c.address,
-        phone: c.phone,
-        city: c.city,
-        department: c.department,
-        plateNumber: c.plateNumber,
-        state: c.state?.name,
-        advisor: c.advisor?.name || c.advisor?.email || '',
-        deliveryDate: c.deliveryDate
-          ? new Date(c.deliveryDate).toLocaleDateString('es-CO')
-          : '',
-        deliveryState: c.deliveryState,
-        saleDate: c.saleDate
-          ? new Date(c.saleDate).toLocaleDateString('es-CO')
-          : '',
-        saleState: c.saleState,
-        origin: c.origin,
-        createdAt: new Date(c.createdAt).toLocaleDateString('es-CO'),
-        updatedAt: new Date(c.updatedAt).toLocaleDateString('es-CO'),
-      });
-    });
-
-    sheet.getRow(1).font = { bold: true };
-
-    const buffer = await workbook.xlsx.writeBuffer();
-    return buffer;
-  }
-
   // Obtener cliente por ID
   async getCustomerById(id: number, user: any) {
     const customer = await this.prisma.customer.findUnique({
@@ -376,8 +313,13 @@ export class CustomersService {
 
   // Actualizar cliente
   async updateCustomer(id: number, dto: UpdateCustomerDto, user: any) {
-    const customer = await this.prisma.customer.findUnique({ where: { id } });
-    if (!customer) throw new NotFoundException('Cliente no encontrado');
+    const customer = await this.prisma.customer.findUnique({
+      where: { id },
+    });
+
+    if (!customer) {
+      throw new NotFoundException('Cliente no encontrado');
+    }
 
     if (dto.birthdate) dto.birthdate = new Date(dto.birthdate as any) as any;
     if (dto.saleDate) dto.saleDate = new Date(dto.saleDate as any) as any;
@@ -386,7 +328,17 @@ export class CustomersService {
     if (dto.approvalDate)
       dto.approvalDate = new Date(dto.approvalDate as any) as any;
 
-    if (dto.stateId === 19) {
+    const isChangingDeliveryState =
+      dto.deliveryState && dto.deliveryState !== customer.deliveryState;
+
+    if (isChangingDeliveryState && dto.deliveryState === 'ENTREGADO') {
+      dto.saleState = customer.saleState;
+    } else if (
+      isChangingDeliveryState &&
+      'PENDIENTE_ENTREGA' === dto.deliveryState
+    ) {
+      dto.saleState = 'PENDIENTE_POR_APROBAR';
+    } else if (dto.stateId === 19) {
       dto.saleState = 'PENDIENTE_POR_APROBAR';
     } else {
       dto.saleState = dto.saleState ?? customer.saleState;
@@ -692,8 +644,16 @@ export class CustomersService {
       throw new ForbiddenException('No tienes permisos para ver aprobados');
     }
 
-    const whereFilter: any = { saleState: 'APROBADO' };
-    if (user.role === Role.ASESOR) whereFilter.advisorId = user.userId;
+    const whereFilter: any = {
+      saleState: 'APROBADO',
+      NOT: {
+        deliveryState: 'ENTREGADO',
+      },
+    };
+
+    if (user.role === Role.ASESOR) {
+      whereFilter.advisorId = user.userId;
+    }
 
     const customers = await this.prisma.customer.findMany({
       where: whereFilter,
@@ -1027,14 +987,18 @@ export class CustomersService {
     };
   }
 
-  // Exportar todos los clientes aprobados a Excel
-  async exportAllApprovedCustomers(user: any): Promise<ArrayBuffer> {
+  // Exportar clientes aprobados a Excel (con toda la info)
+  // SOLO SUPER_ADMIN
+  async exportCustomersFullExcel(
+    user: any,
+    where: Prisma.CustomerWhereInput,
+  ): Promise<ArrayBuffer> {
     if (!hasRole(user.role, [Role.SUPER_ADMIN])) {
       throw new ForbiddenException('No tienes permisos para exportar clientes');
     }
 
     const customers = await this.prisma.customer.findMany({
-      where: { saleState: 'APROBADO' },
+      where,
       orderBy: { id: 'asc' },
       include: {
         advisor: true,
@@ -1062,9 +1026,16 @@ export class CustomersService {
       { header: 'Ciudad', key: 'city', width: 20 },
       { header: 'Departamento', key: 'department', width: 20 },
       { header: 'Estado', key: 'state', width: 20 },
+      { header: 'Estado de Entrega', key: 'deliveryState', width: 20 },
+      { header: 'Fecha Creación', key: 'createdAt', width: 20 },
+      { header: 'Fecha Asignación', key: 'assignedAt', width: 20 },
       { header: 'Asesor', key: 'advisor', width: 20 },
       { header: 'Fecha Venta', key: 'saleDate', width: 20 },
-      { header: 'Mes de Aprobacion', key: 'approvalDate', width: 30 },
+      {
+        header: 'Mes Aprobación Venta',
+        key: 'customerApprovalMonth',
+        width: 30,
+      },
       { header: 'Numero de Orden', key: 'orderNumber', width: 20 },
       { header: 'Estado Venta', key: 'saleState', width: 20 },
       { header: 'Entrega', key: 'deliveryDate', width: 20 },
@@ -1077,6 +1048,9 @@ export class CustomersService {
       { header: 'Doc Titular', key: 'holderDocument', width: 20 },
       { header: 'Correo Titular', key: 'holderEmail', width: 25 },
       { header: 'Teléfono Titular', key: 'holderPhone', width: 20 },
+      { header: 'Dirección Titular', key: 'holderAddress', width: 30 },
+      { header: 'Ciudad Titular', key: 'holderCity', width: 20 },
+      { header: 'Entidad Titular', key: 'holderFinancialEntity', width: 25 },
 
       // PURCHASE
       { header: 'Marca', key: 'brand', width: 20 },
@@ -1091,7 +1065,11 @@ export class CustomersService {
       { header: 'Entidad Financiera', key: 'paymentEntity', width: 20 },
       { header: 'Pago Total', key: 'paymentTotal', width: 15 },
       { header: 'Aval', key: 'aval', width: 15 },
-      { header: 'Fecha Aprobación', key: 'approvalDate', width: 20 },
+      {
+        header: 'Fecha Aprobación Crédito',
+        key: 'paymentApprovalDate',
+        width: 25,
+      },
 
       // RECEIPT (primer recibo)
       { header: 'N° Recibo', key: 'receiptNumber', width: 20 },
@@ -1099,6 +1077,7 @@ export class CustomersService {
       { header: 'Monto', key: 'receiptAmount', width: 15 },
 
       // INVOICE
+      { header: 'Creación Factura', key: 'invoiceCreatedAt', width: 20 },
       { header: 'N° Factura', key: 'invoiceNumber', width: 20 },
       { header: 'Fecha Factura', key: 'invoiceDate', width: 20 },
       { header: 'Valor Factura', key: 'invoiceValue', width: 20 },
@@ -1106,6 +1085,7 @@ export class CustomersService {
       { header: 'Motor', key: 'engineNumber', width: 25 },
 
       // REGISTRATION
+      { header: 'Registro Matrícula', key: 'registerCreatedAt', width: 20 },
       { header: 'Placa', key: 'plate', width: 15 },
       { header: 'SOAT', key: 'soatValue', width: 15 },
       { header: 'Matricula', key: 'registerValue', width: 15 },
@@ -1141,45 +1121,72 @@ export class CustomersService {
         const reg = registrations[i] || {};
 
         sheet.addRow({
-          // CUSTOMER
+          // ================= CUSTOMER =================
           name: i === 0 ? c.name : '',
           document: i === 0 ? c.document : '',
           email: i === 0 ? c.email : '',
           phone: i === 0 ? c.phone : '',
           birthdate:
             i === 0 && c.birthdate
-              ? new Date(c.birthdate).toLocaleDateString('es-CO')
+              ? new Date(c.birthdate).toLocaleDateString('es-CO', {
+                  timeZone: 'UTC',
+                })
               : '',
           address: i === 0 ? c.address : '',
           city: i === 0 ? c.city : '',
           department: i === 0 ? c.department : '',
           state: i === 0 ? c.state?.name : '',
+          deliveryState: i === 0 ? c.deliveryState : '',
+          assignedAt:
+            i === 0 && c.assignedAt
+              ? new Date(c.assignedAt).toLocaleDateString('es-CO', {
+                  timeZone: 'UTC',
+                })
+              : '',
+          createdAt:
+            i === 0 && c.createdAt
+              ? new Date(c.createdAt).toLocaleDateString('es-CO', {
+                  timeZone: 'UTC',
+                })
+              : '',
           advisor: i === 0 ? c.advisor?.name : '',
           saleDate:
             i === 0 && c.saleDate
-              ? new Date(c.saleDate).toLocaleDateString('es-CO')
+              ? new Date(c.saleDate).toLocaleDateString('es-CO', {
+                  timeZone: 'UTC',
+                })
               : '',
-          approvalDate:
+          customerApprovalMonth:
             i === 0 && c.approvalDate
-              ? new Date(c.approvalDate).toLocaleDateString('es-CO')
+              ? new Date(c.approvalDate).toLocaleDateString('es-CO', {
+                  year: 'numeric',
+                  month: 'long',
+                  timeZone: 'UTC',
+                })
               : '',
+
           saleState: i === 0 ? c.saleState : '',
           orderNumber: i === 0 ? c.orderNumber : '',
           deliveryDate:
             i === 0 && c.deliveryDate
-              ? new Date(c.deliveryDate).toLocaleDateString('es-CO')
+              ? new Date(c.deliveryDate).toLocaleDateString('es-CO', {
+                  timeZone: 'UTC',
+                })
               : '',
           plateNumber: i === 0 ? c.plateNumber : '',
           origin: i === 0 ? c.origin : '',
           distributor: i === 0 ? c.distributor : '',
 
-          // HOLDERS
+          // ================= HOLDERS =================
           holderName: holder.fullName || '',
           holderDocument: holder.document || '',
           holderEmail: holder.email || '',
           holderPhone: holder.phone || '',
+          holderAddress: holder.address || '',
+          holderCity: holder.city || '',
+          holderFinancialEntity: holder.financialEntity || '',
 
-          // PURCHASE (solo en primera fila)
+          // ================= PURCHASE =================
           brand: i === 0 ? c.purchase?.brand : '',
           reference: i === 0 ? c.purchase?.reference : '',
           mainColor: i === 0 ? c.purchase?.mainColor : '',
@@ -1188,36 +1195,54 @@ export class CustomersService {
           processValue: i === 0 ? c.purchase?.processValue : '',
           totalValue: i === 0 ? c.purchase?.totalValue : '',
 
-          // PAYMENTS
+          // ================= PAYMENTS =================
           paymentEntity: payment.financialEntity || '',
           paymentTotal: payment.totalPayment || '',
           aval: payment.aval || '',
-          date: payment.approvalDate
-            ? new Date(payment.approvalDate).toLocaleDateString('es-CO')
+          paymentApprovalDate: payment.approvalDate
+            ? new Date(payment.approvalDate).toLocaleDateString('es-CO', {
+                timeZone: 'UTC',
+              })
             : '',
 
-          // RECEIPTS
+          // ================= RECEIPTS =================
           receiptNumber: receipt.receiptNumber || '',
           receiptDate: receipt.date
-            ? new Date(receipt.date).toLocaleDateString('es-CO')
+            ? new Date(receipt.date).toLocaleDateString('es-CO', {
+                timeZone: 'UTC',
+              })
             : '',
           receiptAmount: receipt.amount || '',
 
-          // INVOICES
+          // ================= INVOICES =================
+          invoiceCreatedAt: invoice.createdAt
+            ? new Date(invoice.createdAt).toLocaleDateString('es-CO', {
+                timeZone: 'UTC',
+              })
+            : '',
           invoiceNumber: invoice.invoiceNumber || '',
           invoiceDate: invoice.date
-            ? new Date(invoice.date).toLocaleDateString('es-CO')
+            ? new Date(invoice.date).toLocaleDateString('es-CO', {
+                timeZone: 'UTC',
+              })
             : '',
           invoiceValue: invoice.value || '',
           chassisNumber: invoice.chassisNumber || '',
           engineNumber: invoice.engineNumber || '',
 
-          // REGISTRATION
+          // ================= REGISTRATION =================
+          registerCreatedAt: reg.createdAt
+            ? new Date(reg.createdAt).toLocaleDateString('es-CO', {
+                timeZone: 'UTC',
+              })
+            : '',
           plate: reg.plate || '',
           soatValue: reg.soatValue || '',
           registerValue: reg.registerValue || '',
           registerDate: reg.date
-            ? new Date(reg.date).toLocaleDateString('es-CO')
+            ? new Date(reg.date).toLocaleDateString('es-CO', {
+                timeZone: 'UTC',
+              })
             : '',
         });
       }
@@ -1225,6 +1250,22 @@ export class CustomersService {
 
     const buffer = await workbook.xlsx.writeBuffer();
     return buffer;
+  }
+
+  // APROBADOS (FULL)
+  // Exportar todos los clientes aprobados a Excel
+  exportApprovedCustomersExcel(user: any) {
+    return this.exportCustomersFullExcel(user, {
+      saleState: 'APROBADO',
+    });
+  }
+
+  // ENTREGADOS (FULL)
+  // Exportar todos los clientes entregados a Excel
+  exportDeliveredCustomersExcel(user: any) {
+    return this.exportCustomersFullExcel(user, {
+      deliveryState: 'ENTREGADO',
+    });
   }
 
   // Calcular saldo pendiente CUSTOMER
@@ -1254,14 +1295,7 @@ export class CustomersService {
 
   // Exportar orden de entrega en PDF para cliente aprobado
   async exportApprovedOrderPdf(customerId: number, user: any): Promise<Buffer> {
-    if (
-      !hasRole(user.role, [
-        Role.SUPER_ADMIN,
-        Role.AUXILIAR,
-        Role.COORDINADOR,
-        Role.ADMIN,
-      ])
-    ) {
+    if (!hasRole(user.role, [Role.SUPER_ADMIN, Role.COORDINADOR, Role.ADMIN])) {
       throw new ForbiddenException('No tienes permisos para exportar clientes');
     }
 
@@ -1278,11 +1312,19 @@ export class CustomersService {
     });
 
     if (!customer) throw new Error('Cliente no encontrado');
-    if (
-      customer.saleState !== 'APROBADO' ||
-      customer.deliveryState !== 'ENTREGADO'
-    ) {
-      throw new Error('El cliente no está APROBADO o ENTREGADO');
+
+    const invoice = customer.invoices?.[0] ?? null;
+    const registration = customer.registration?.[0] ?? null;
+
+    const hasInvoice = !!invoice?.chassisNumber && !!invoice?.engineNumber;
+
+    const hasRegistration = !!registration?.plate;
+
+    if (!hasInvoice || !hasRegistration) {
+      throw new BadRequestException(
+        'No se puede generar la orden de entrega. ' +
+          'Aún faltan datos obligatorios por registrar en facturación y/o matrícula.',
+      );
     }
 
     const PDFDocument = require('pdfkit');
@@ -1534,11 +1576,6 @@ export class CustomersService {
     );
 
     // INFORMACIÓN VEHÍCULO
-    const invoice = customer.invoices?.[0] || {};
-    const registration = Array.isArray(customer.registration)
-      ? customer.registration[0]
-      : customer.registration;
-
     y = drawColumnTable(
       'INFORMACIÓN VEHÍCULO',
       ['Chasis', 'Motor', 'Placa'],
