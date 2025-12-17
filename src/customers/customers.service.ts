@@ -579,11 +579,17 @@ export class CustomersService {
           select: { orderNumber: true },
         });
 
+        const PREFIX = 'MR';
+        const START_NUMBER = 828;
+
         if (!last || !last.orderNumber) {
-          generatedOrderNumber = 'MRS0001';
+          generatedOrderNumber = `${PREFIX}${START_NUMBER.toString().padStart(4, '0')}`;
         } else {
-          const num = parseInt(last.orderNumber.replace('MRS', '')) + 1;
-          generatedOrderNumber = `MRS${num.toString().padStart(4, '0')}`;
+          const lastNumber = parseInt(last.orderNumber.replace(PREFIX, ''), 10);
+          const nextNumber = lastNumber + 1;
+          generatedOrderNumber = `${PREFIX}${nextNumber
+            .toString()
+            .padStart(4, '0')}`;
         }
       }
 
