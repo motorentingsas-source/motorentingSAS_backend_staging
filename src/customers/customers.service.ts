@@ -580,7 +580,7 @@ export class CustomersService {
         });
 
         const PREFIX = 'MR';
-        const START_NUMBER = 828;
+        const START_NUMBER = 877;
 
         if (!last || !last.orderNumber) {
           generatedOrderNumber = `${PREFIX}${START_NUMBER.toString().padStart(4, '0')}`;
