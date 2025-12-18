@@ -328,20 +328,15 @@ export class CustomersService {
     if (dto.approvalDate)
       dto.approvalDate = new Date(dto.approvalDate as any) as any;
 
-    const isChangingDeliveryState =
-      dto.deliveryState && dto.deliveryState !== customer.deliveryState;
+    dto.saleState = customer.saleState;
 
-    if (isChangingDeliveryState && dto.deliveryState === 'ENTREGADO') {
-      dto.saleState = customer.saleState;
-    } else if (
-      isChangingDeliveryState &&
-      'PENDIENTE_ENTREGA' === dto.deliveryState
-    ) {
-      dto.saleState = 'PENDIENTE_POR_APROBAR';
-    } else if (dto.stateId === 19) {
-      dto.saleState = 'PENDIENTE_POR_APROBAR';
-    } else {
-      dto.saleState = dto.saleState ?? customer.saleState;
+    const isChangingStateId =
+      dto.stateId !== undefined && dto.stateId !== customer.stateId;
+
+    if (isChangingStateId && dto.stateId === 19) {
+      if (customer.saleState !== 'APROBADO') {
+        dto.saleState = 'PENDIENTE_POR_APROBAR';
+      }
     }
 
     const updated = await this.prisma.customer.update({
@@ -583,6 +578,7 @@ export class CustomersService {
         const START_NUMBER = 877;
 
         if (!last || !last.orderNumber) {
+          console.log(PREFIX, START_NUMBER);
           generatedOrderNumber = `${PREFIX}${START_NUMBER.toString().padStart(4, '0')}`;
         } else {
           const lastNumber = parseInt(last.orderNumber.replace(PREFIX, ''), 10);
@@ -1381,10 +1377,10 @@ export class CustomersService {
 
       const colCount = columns.length;
       const colWidth = pageWidth / colCount;
-      const rowHeight = 26;
+      const padding = 5;
+      const minRowHeight = 26;
 
-      // Encabezado
-      doc.rect(marginLeft, y, pageWidth, rowHeight).stroke();
+      doc.rect(marginLeft, y, pageWidth, minRowHeight).stroke();
 
       columns.forEach((col, i) => {
         const colX = marginLeft + colWidth * i;
@@ -1392,22 +1388,30 @@ export class CustomersService {
         if (i > 0) {
           doc
             .moveTo(colX, y)
-            .lineTo(colX, y + rowHeight)
+            .lineTo(colX, y + minRowHeight)
             .stroke();
         }
 
         doc
           .font('Helvetica-Bold')
           .fontSize(TABLE_FONT)
-          .text(col, colX + 5, y + 8, {
-            width: colWidth - 10,
+          .text(col, colX + padding, y + 8, {
+            width: colWidth - padding * 2,
             align: 'center',
           });
       });
 
-      y += rowHeight;
+      y += minRowHeight;
 
-      // Fila de datos
+      const heights = values.map((val) =>
+        doc.heightOfString(safe(val), {
+          width: colWidth - padding * 2,
+          align: 'center',
+        }),
+      );
+
+      const rowHeight = Math.max(...heights) + padding * 2;
+
       doc.rect(marginLeft, y, pageWidth, rowHeight).stroke();
 
       values.forEach((val, i) => {
@@ -1423,8 +1427,8 @@ export class CustomersService {
         doc
           .font('Helvetica')
           .fontSize(TABLE_FONT)
-          .text(safe(val), colX + 5, y + 8, {
-            width: colWidth - 10,
+          .text(safe(val), colX + padding, y + padding, {
+            width: colWidth - padding * 2,
             align: 'center',
           });
       });
@@ -1450,37 +1454,39 @@ export class CustomersService {
         'Correo',
         'Dirección',
       ];
+
       const colCount = columns.length;
       const colWidth = pageWidth / colCount;
-      const rowHeight = 26;
+      const padding = 5;
+      const minRowHeight = 26;
 
-      // Header
-      doc.rect(marginLeft, y, pageWidth, rowHeight).stroke();
+      doc.rect(marginLeft, y, pageWidth, minRowHeight).stroke();
 
       columns.forEach((col, i) => {
         const colX = marginLeft + colWidth * i;
-        if (i > 0)
+
+        if (i > 0) {
           doc
             .moveTo(colX, y)
-            .lineTo(colX, y + rowHeight)
+            .lineTo(colX, y + minRowHeight)
             .stroke();
+        }
 
         doc
           .font('Helvetica-Bold')
           .fontSize(TABLE_FONT)
-          .text(col, colX + 5, y + 8, {
-            width: colWidth - 10,
+          .text(col, colX + padding, y + 8, {
+            width: colWidth - padding * 2,
             align: 'center',
           });
       });
 
-      y += rowHeight;
+      y += minRowHeight;
 
-      // Filas de titulares
       for (const h of holders) {
         y = checkPage(y);
 
-        const vals = [
+        const values = [
           h.fullName || '',
           h.document || '',
           h.phone || '',
@@ -1488,21 +1494,32 @@ export class CustomersService {
           h.address || '',
         ];
 
+        const heights = values.map((val) =>
+          doc.heightOfString(safe(val), {
+            width: colWidth - padding * 2,
+            align: 'center',
+          }),
+        );
+
+        const rowHeight = Math.max(...heights, minRowHeight) + padding * 2;
+
         doc.rect(marginLeft, y, pageWidth, rowHeight).stroke();
 
-        vals.forEach((val, i) => {
+        values.forEach((val, i) => {
           const colX = marginLeft + colWidth * i;
-          if (i > 0)
+
+          if (i > 0) {
             doc
               .moveTo(colX, y)
               .lineTo(colX, y + rowHeight)
               .stroke();
+          }
 
           doc
             .font('Helvetica')
             .fontSize(TABLE_FONT)
-            .text(safe(val), colX + 5, y + 8, {
-              width: colWidth - 10,
+            .text(safe(val), colX + padding, y + padding, {
+              width: colWidth - padding * 2,
               align: 'center',
             });
         });
@@ -1538,22 +1555,13 @@ export class CustomersService {
     // INFORMACIÓN CLIENTE
     y = drawColumnTable(
       'INFORMACIÓN DEL CLIENTE',
-      [
-        'Nombre',
-        'Documento',
-        'Teléfono',
-        'Correo',
-        'Ciudad',
-        'Depto',
-        'Dirección',
-      ],
+      ['Nombre', 'Documento', 'Teléfono', 'Correo', 'Ciudad', 'Dirección'],
       [
         customer.name,
         customer.document,
         customer.phone,
         customer.email,
         customer.city,
-        customer.department,
         customer.address,
       ],
       y,
